@@ -296,7 +296,8 @@ LLM + news layer validated only by **forward paper/live on real news** (no other
 12. **Validate against the scorecard → scale fast** via the promotion ladder (kill rule live).
 
 **Minimum critical path to live-small** (the only way "a few months" holds; ~60% of total points):
-EPIC-A, B (archiver + backfill), C, D, E, F.1/F.3/F.4/F.5, G, H.2/H.3/H.6/H.7/H.8, I,
+EPIC-A, B (archiver + backfill), C, D, E, F (all; F.2 feeds the edge-establishing backtest), G,
+H.2/H.3/H.6/H.7/H.8, I,
 L.0/L.1(minimal)/L.2/L.3/L.6 (backtest coverage for the edge), K.3/K.4/K.6/K.7 (+ minimal K.5),
 M.1/M.2, N. **Deferred past live-small:** the rest of the GUI (K.8/K.9), LLM live gating (J stays in
 shadow; J.8 later), backtest UI polish (L.4), M.3.

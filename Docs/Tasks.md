@@ -5,6 +5,11 @@
 > **sub-issues / acceptance checklist**. Every task carries: description, acceptance criteria,
 > dependencies, labels, estimate, priority.
 
+> **Linear mirror (2026-09-19):** project [AI Trader](https://linear.app/pro-futures-strategies/project/ai-trader-03b54bade903).
+> Epics are parent issues PRO-637 to PRO-651 (A to O in order); tasks are sub-issues PRO-652 to PRO-747.
+> Linear is the tracking source of truth for status; this file is the spec source. Keep them in sync when
+> scope changes.
+
 ## Conventions
 - **IDs:** `EPIC-x` letters; tasks `x.n` (stable references for dependencies).
 - **Estimate (points):** 1 ≈ <½ day · 2 ≈ ½–1 day · 3 ≈ 1–2 days · 5 ≈ 2–4 days · 8 ≈ ~1 week.
@@ -595,5 +600,9 @@ the cost model. Neither alone is the proof.
 > independent of the live loops once F.2 + H.7 exist.
 
 **Minimum critical path to live-small** (~60% of points; the only way "a few months" holds): A, B, C, D, E,
-F.1/F.3/F.4/F.5, G, H.2/H.3/H.6/H.7/H.8, I, L.0/L.1(minimal)/L.2/L.3/L.6, K.3/K.4/K.6/K.7 (+ minimal K.5),
-M.1/M.2, N. **Deferred past live-small:** K.8/K.9, LLM live gating (J stays in shadow; J.8 later), L.4, M.3.
+F (all; F.2 feeds the edge-establishing backtest), G, H.2/H.3/H.6/H.7/H.8, I, L.0/L.1(minimal)/L.2/L.3/L.6,
+K.3/K.4/K.6/K.7 (+ minimal K.5), M.1/M.2, N. **Deferred past live-small:** K.8/K.9, LLM live gating (J stays in
+shadow; J.8 later), L.4, M.3.
+
+**Path to the first real answer (the backtest result, before any capital is committed):** A → C → D → E.4 →
+F.1/F.2 → H.7 → L.0 → L.1 → L.2 + L.6 → L.3. Everything else only matters if that number is positive and stable.
