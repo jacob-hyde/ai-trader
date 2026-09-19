@@ -1,0 +1,27 @@
+# dependencies / build
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# secrets: only .env.example is committed
+.env
+.env.*
+!.env.example
+
+# local data
+data/dumps/
+data/bars/
+*.log
+.DS_Store
+
+# laravel (apps/web)
+apps/web/vendor/
+apps/web/node_modules/
+apps/web/.env
+apps/web/public/build/
+apps/web/storage/*.key
+apps/web/storage/logs/
+apps/web/storage/framework/cache/
+apps/web/storage/framework/sessions/
+apps/web/storage/framework/views/

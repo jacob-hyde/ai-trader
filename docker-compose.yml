@@ -1,0 +1,31 @@
+# Local stack. The same file deploys to Linode; only .env / Docker secrets differ.
+# Engine, web, and Reverb services are added as their epics land (A.3 completes with them).
+services:
+  db:
+    image: timescale/timescaledb:latest-pg16
+    environment:
+      POSTGRES_USER: ${DB_USER:-trader}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-trader}
+      POSTGRES_DB: ${DB_NAME:-trader}
+    ports:
+      - "5432:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-trader} -d ${DB_NAME:-trader}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  db-data:
