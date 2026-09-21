@@ -11,4 +11,5 @@ export const CORE_VERSION = "0.0.1";
 export * from "./costToRisk.js";
 export * from "./costs.js";
 export * from "./money.js";
+export * from "./riskRules.js";
 export * from "./sizing.js";
