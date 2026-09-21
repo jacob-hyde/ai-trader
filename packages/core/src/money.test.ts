@@ -34,6 +34,7 @@ import {
 } from "./money.js";
 
 const MODES: readonly RoundingMode[] = ["floor", "ceil", "trunc", "nearest"];
+const MAX_SAFE = BigInt(Number.MAX_SAFE_INTEGER);
 
 // Independent reference built on a floor primitive, formulated differently from the implementation so
 // the property tests cross-check rather than mirror it.
@@ -245,10 +246,22 @@ describe("multiplication and division against a BigInt reference", () => {
     const nonZeroFixed = fixedArb.filter((v) => v !== 0);
     fc.assert(
       fc.property(fixedArb, nonZeroFixed, modeArb, (a, b, mode) => {
-        expect(divToRatio(a, b, mode)).toBe(Number(refDivide(BigInt(a) * 10_000n, BigInt(b), mode)));
+        // Scaling by 10 000 can leave the safe range for a large numerator over a tiny denominator.
+        const expectedRatio = refDivide(BigInt(a) * 10_000n, BigInt(b), mode);
+        if (expectedRatio > MAX_SAFE || expectedRatio < -MAX_SAFE) {
+          expect(() => divToRatio(a, b, mode)).toThrow(MoneyError);
+        } else {
+          expect(divToRatio(a, b, mode)).toBe(Number(expectedRatio));
+        }
         expect(divToCount(a, b, mode)).toBe(Number(refDivide(BigInt(a), BigInt(b), mode)));
       }),
     );
+  });
+
+  it("divToRatio refuses a ratio outside the safe range", () => {
+    // The counterexample CI found: 900 719 925 475 * 10 000 is just past 2^53.
+    expect(() => divToRatio(fixed(-900_719_925_475), fixed(-1), "floor")).toThrow(MoneyError);
+    expect(divToRatio(fixed(900_719_925_474), fixed(1), "floor")).toBe(9_007_199_254_740_000);
   });
 
   it("refuses products outside the safe range", () => {
