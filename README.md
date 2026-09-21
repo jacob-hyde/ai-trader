@@ -27,11 +27,13 @@ data                Bar storage and migration scripts
 cp .env.example .env        # then fill in Alpaca paper keys
 pnpm install
 docker compose up -d db redis
+pnpm migrate:up             # schema owner: Timescale extension, data-only engine role, tables
 pnpm typecheck && pnpm lint && pnpm test
 pnpm engine                 # boots the engine, prints the mode banner, pings Alpaca
 ```
 
-`.env` is gitignored. Keys never go in the database or the UI.
+`.env` is gitignored. Keys never go in the database or the UI. The engine connects with a data-only
+database role; only the migration runner (`data/`) can change the schema.
 
 ## Modes
 

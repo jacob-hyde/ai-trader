@@ -1,0 +1,25 @@
+{
+  "name": "@trader/data",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "migrate": "tsx migrate.ts",
+    "migrate:up": "tsx migrate.ts up",
+    "migrate:down": "tsx migrate.ts down",
+    "migrate:status": "tsx migrate.ts status",
+    "migrate:create": "tsx migrate.ts create",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "node-pg-migrate": "^7.7.1",
+    "pg": "^8.13.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.4",
+    "@types/pg": "^8.11.10",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.3"
+  }
+}
