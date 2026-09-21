@@ -1,15 +1,21 @@
 /**
  * Deterministic decision core.
  *
- * Pure functions only. No broker, network, LLM, clock, or filesystem access is allowed in this package.
- * Everything risky depends on it and it depends on nothing, which is what makes it fully unit-testable.
+ * No broker, network, LLM, clock, or filesystem access is allowed in this package. Everything risky
+ * depends on it, and it depends only on one pure library, trading-signals, for the ATR and RSI math.
+ * That is what makes it fully unit-testable.
+ *
+ * Pure functions throughout, except the incremental indicators, whose state is private and fed only by
+ * closed bars.
  *
  * Sizing, risk rules, indicators, the Setup interface, and the ORB setup land here (EPIC-C).
  */
 export const CORE_VERSION = "0.0.1";
 
+export * from "./bars.js";
 export * from "./costToRisk.js";
 export * from "./costs.js";
+export * from "./indicators.js";
 export * from "./money.js";
 export * from "./riskRules.js";
 export * from "./sizing.js";

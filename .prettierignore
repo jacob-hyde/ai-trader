@@ -5,3 +5,4 @@ pnpm-lock.yaml
 Docs/
 apps/web/
 *.docx
+packages/core/src/__fixtures__/*.json
