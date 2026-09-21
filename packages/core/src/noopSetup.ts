@@ -28,5 +28,6 @@ export const noopSetupDefinition: SetupDefinition<typeof noopParams> = {
         : add(signal.entry, tickSize(signal.entry)),
     target: () => null,
     invalidation: () => true,
+    management: () => ({ breakevenAtR: null }),
   }),
 };

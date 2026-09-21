@@ -6,6 +6,7 @@ import { noopSetupDefinition } from "./noopSetup.js";
 import {
   SetupError,
   loadSetup,
+  planTrade,
   type MarketState,
   type SetupBehavior,
   type SetupDefinition,
@@ -59,6 +60,7 @@ function signalFor(
     minuteOfSession: 4,
     entryType: "stop",
     entry: usd(20.1),
+    levels: {},
     ...overrides,
   };
 }
@@ -87,6 +89,7 @@ function scripted(
       stop: () => usd(20),
       target: () => null,
       invalidation: () => false,
+      management: () => ({ breakevenAtR: null }),
       ...behavior,
     }),
     ...meta,
@@ -133,6 +136,7 @@ describe("loadSetup with the no-op setup", () => {
     expect(setup.stop(short, symbol)).toBe(usd(20.11));
     expect(setup.target(long, symbol)).toBeNull();
     expect(setup.invalidation(long, symbol)).toBe(true);
+    expect(setup.management(long, symbol)).toEqual({ breakevenAtR: null });
   });
 });
 
@@ -299,5 +303,42 @@ describe("the loaded setup's contract checks", () => {
     expectCode(() => targets(usd(20.7)).target(short, symbol), "CONTRACT_VIOLATION");
     expectCode(() => targets(usd(0)).target(short, symbol), "CONTRACT_VIOLATION");
     expectCode(() => targets(Number.NaN as Fixed).target(long, symbol), "CONTRACT_VIOLATION");
+  });
+});
+
+describe("management and planTrade", () => {
+  const params = { stopAtrBps: 1_000 };
+  const long = signalFor(scripted({}));
+
+  it("passes a valid breakeven through and throws on one that is not a positive whole number", () => {
+    const manages = (breakevenAtR: number | null) =>
+      loadSetup(scripted({ management: () => ({ breakevenAtR: breakevenAtR as never }) }), params);
+    expect(manages(null).management(long, symbol)).toEqual({ breakevenAtR: null });
+    expect(manages(10_000).management(long, symbol)).toEqual({ breakevenAtR: 10_000 });
+    for (const bad of [0, -10_000, 0.5, Number.NaN]) {
+      expectCode(() => manages(bad).management(long, symbol), "CONTRACT_VIOLATION", "breakevenAtR");
+    }
+  });
+
+  it("gathers the stop, target, and management of a signal into one plan", () => {
+    const setup = loadSetup(
+      scripted({
+        stop: () => usd(19.95),
+        target: () => usd(20.4),
+        management: () => ({ breakevenAtR: ratio(10_000) }),
+      }),
+      params,
+    );
+    expect(planTrade(setup, long, symbol)).toEqual({
+      signal: long,
+      stop: usd(19.95),
+      target: usd(20.4),
+      management: { breakevenAtR: 10_000 },
+    });
+  });
+
+  it("refuses to plan a trade whose stop breaks the contract", () => {
+    const setup = loadSetup(scripted({ stop: () => usd(20.5) }), params);
+    expectCode(() => planTrade(setup, long, symbol), "CONTRACT_VIOLATION", "stop");
   });
 });
