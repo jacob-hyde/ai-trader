@@ -2,8 +2,8 @@
  * Deterministic decision core.
  *
  * No broker, network, LLM, clock, or filesystem access is allowed in this package. Everything risky
- * depends on it, and it depends only on one pure library, trading-signals, for the ATR and RSI math.
- * That is what makes it fully unit-testable.
+ * depends on it, and it depends only on two pure libraries: trading-signals for the ATR and RSI math and
+ * zod for setup parameter schemas. That is what makes it fully unit-testable.
  *
  * Pure functions throughout, except the incremental indicators, whose state is private and fed only by
  * closed bars.
@@ -17,5 +17,7 @@ export * from "./costToRisk.js";
 export * from "./costs.js";
 export * from "./indicators.js";
 export * from "./money.js";
+export * from "./noopSetup.js";
 export * from "./riskRules.js";
+export * from "./setup.js";
 export * from "./sizing.js";
