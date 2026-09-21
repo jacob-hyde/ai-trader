@@ -97,6 +97,10 @@ importers:
         version: 5.9.3
 
   packages/core:
+    dependencies:
+      trading-signals:
+        specifier: 8.3.0
+        version: 8.3.0
     devDependencies:
       typescript:
         specifier: ^5.6.3
@@ -1259,6 +1263,9 @@ packages:
     resolution: {integrity: sha512-n1cw8k1k0x4pgA2+9XrOkFydTerNcJ1zWCO5Nn9scWHTD+5tp8dghT2x1uduQePZTZgd3Tupf+x9BxJjeJi77Q==}
     engines: {node: '>=14.0.0'}
 
+  trading-signals@8.3.0:
+    resolution: {integrity: sha512-C2DigYcuaBmTfLJ4KkCgM6TPZwKoFYz9Tyj2BWnTgMVMb3u21udF80oGPhqGyyd57RPJnrst3pc0ShA09XVUAw==}
+
   ts-api-utils@2.5.0:
     resolution: {integrity: sha512-OJ/ibxhPlqrMM0UiNHJ/0CKQkoKF243/AEmplt3qpRgkW8VG7IfOS41h7V8TjITqdByHzrjcS/2si+y4lIh8NA==}
     engines: {node: '>=18.12'}
@@ -2380,6 +2387,8 @@ snapshots:
   tinyrainbow@1.2.0: {}
 
   tinyspy@3.0.2: {}
+
+  trading-signals@8.3.0: {}
 
   ts-api-utils@2.5.0(typescript@5.9.3):
     dependencies:
