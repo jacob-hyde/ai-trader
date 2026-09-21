@@ -13,6 +13,9 @@
  * setup also checks every answer against the contract (supported direction, stop on the risk side,
  * target on the profit side) and throws SetupError on a violation, because that is a bug in the setup
  * and not a market condition. Sizing and the risk rules reject the same mistakes again downstream.
+ *
+ * planTrade gathers a signal's stop, target, and management into the TradePlan that the cost gate,
+ * sizing, the risk rules, and the bracket builder consume in turn.
  */
 
 import type { z } from "zod";
@@ -84,6 +87,20 @@ export interface SetupSignal {
   readonly entryType: EntryType;
   /** Trigger price for a stop entry, limit price for a limit entry, reference price for a market entry. */
   readonly entry: Fixed;
+  /**
+   * Named prices the setup measured, e.g. the opening range's high and low. Is how stop and target
+   * reach what detectTrigger saw without being handed the bars again, and what the decision log shows.
+   */
+  readonly levels: Readonly<Record<string, Fixed>>;
+}
+
+/** How an open position is managed after the fill. Acted on by the position monitor, never by the setup. */
+export interface PositionManagement {
+  /**
+   * Move the stop to entry once price has gone this far in favor, in basis points of R (10 000 is
+   * +1R). Null leaves the stop where it is.
+   */
+  readonly breakevenAtR: Ratio | null;
 }
 
 /** The decision logic of one setup, built from validated parameters. */
@@ -114,6 +131,9 @@ export interface SetupBehavior {
    * through the stop first. Only ever consulted for pending entries. It never gates an exit.
    */
   invalidation(signal: SetupSignal, symbol: SymbolState): boolean;
+
+  /** How the position is managed once filled. Must not depend on anything after the signal. */
+  management(signal: SetupSignal, symbol: SymbolState): PositionManagement;
 }
 
 /** A setup as registered with the framework: identity, requirements, parameter schema, and a factory. */
@@ -246,5 +266,37 @@ export function loadSetup<Schema extends z.AnyZodObject>(
       return target;
     },
     invalidation: (signal, symbol) => behavior.invalidation(signal, symbol),
+    management(signal, symbol) {
+      const management = behavior.management(signal, symbol);
+      const { breakevenAtR } = management;
+      if (breakevenAtR !== null && (!Number.isSafeInteger(breakevenAtR) || breakevenAtR <= 0)) {
+        throw violation("breakevenAtR is not a positive whole number of basis points");
+      }
+      return management;
+    },
+  };
+}
+
+/** Everything one trade needs before sizing: the signal, its protective stop, its target, its management. */
+export interface TradePlan {
+  readonly signal: SetupSignal;
+  readonly stop: Fixed;
+  /** Null means no take-profit leg: the position runs to the EOD flatten. */
+  readonly target: Fixed | null;
+  readonly management: PositionManagement;
+}
+
+/**
+ * Asks a loaded setup for the stop, target, and management of a signal it produced.
+ *
+ * Goes through the loader's contract checks, so a plan that comes back has a stop on the risk side and
+ * a target on the profit side. Throws SetupError when the setup breaks the contract.
+ */
+export function planTrade(setup: Setup, signal: SetupSignal, symbol: SymbolState): TradePlan {
+  return {
+    signal,
+    stop: setup.stop(signal, symbol),
+    target: setup.target(signal, symbol),
+    management: setup.management(signal, symbol),
   };
 }
