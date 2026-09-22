@@ -20,6 +20,7 @@ export * from "./indicators.js";
 export * from "./money.js";
 export * from "./noopSetup.js";
 export * from "./orb.js";
+export * from "./paths.js";
 export * from "./riskRules.js";
 export * from "./setup.js";
 export * from "./sizing.js";
