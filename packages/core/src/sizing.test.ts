@@ -161,6 +161,7 @@ describe("sizePosition rejections", () => {
     expect(rejected({ ...EXAMPLE, equity: usd(-100) }, PROVEN).reason).toBe("NON_POSITIVE_EQUITY");
     expect(rejected({ ...EXAMPLE, entry: usd(0) }, PROVEN).reason).toBe("INVALID_PRICE");
     expect(rejected({ ...EXAMPLE, stop: usd(-1) }, PROVEN).reason).toBe("INVALID_PRICE");
+    expect(rejected({ ...EXAMPLE, stop: usd(0) }, PROVEN).reason).toBe("INVALID_PRICE");
   });
 
   it("rejects below one share and names the constraint that floored to zero", () => {

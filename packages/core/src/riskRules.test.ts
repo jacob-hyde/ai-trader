@@ -193,6 +193,13 @@ describe("UNPROTECTED_POSITION", () => {
     const state = portfolio([held("AAA", 1, 20, null)]);
     expect(decide(entry("BBB", 1, 20, 19.9), state).reasons).toEqual(["UNPROTECTED_POSITION"]);
   });
+
+  it("counts no open risk for the unprotected position, because the veto already covers it", () => {
+    const state = portfolio([held("AAA", 25, 20, null)]);
+    const result = decide(entry("BBB", 25, 20, 19.6), state);
+    expect(result.reasons).toEqual(["UNPROTECTED_POSITION"]);
+    expect(result.measures?.openRisk).toBe(usd(10));
+  });
 });
 
 describe("unevaluable input", () => {
@@ -211,6 +218,7 @@ describe("unevaluable input", () => {
       { ...good, stop: usd(20) },
       { ...good, stop: usd(20.1) },
       { ...good, direction: "short" },
+      { ...good, direction: "short", stop: usd(20) },
       { ...good, direction: "short", stop: fixed(9_000_000_000_000_000), shares: 2 },
     ];
     for (const order of bad) {

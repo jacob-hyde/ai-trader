@@ -6,3 +6,5 @@ Docs/
 apps/web/
 *.docx
 packages/core/src/__fixtures__/*.json
+.stryker-tmp
+reports
