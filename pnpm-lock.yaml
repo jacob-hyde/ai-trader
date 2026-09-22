@@ -69,6 +69,15 @@ importers:
 
   data:
     dependencies:
+      '@trader/adapters':
+        specifier: workspace:*
+        version: link:../packages/adapters
+      '@trader/contracts':
+        specifier: workspace:*
+        version: link:../packages/contracts
+      '@trader/core':
+        specifier: workspace:*
+        version: link:../packages/core
       dotenv:
         specifier: ^16.4.5
         version: 16.6.1

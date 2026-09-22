@@ -9,9 +9,13 @@
     "migrate:down": "tsx migrate.ts down",
     "migrate:status": "tsx migrate.ts status",
     "migrate:create": "tsx migrate.ts create",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "bars": "tsx src/bars/cli.ts"
   },
   "dependencies": {
+    "@trader/adapters": "workspace:*",
+    "@trader/contracts": "workspace:*",
+    "@trader/core": "workspace:*",
     "dotenv": "^16.4.5",
     "node-pg-migrate": "^7.7.1",
     "pg": "^8.13.0"

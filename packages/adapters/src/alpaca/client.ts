@@ -30,6 +30,8 @@ import {
   type AlpacaBulkResult,
   type AlpacaCalendarDay,
   type AlpacaClock,
+  type AlpacaCorporateActionType,
+  type AlpacaCorporateActions,
   type AlpacaFeed,
   type AlpacaMostActives,
   type AlpacaMovers,
@@ -46,6 +48,7 @@ import {
   cancelAllResultSchema,
   clockSchema,
   closeAllResultSchema,
+  corporateActionsPageSchema,
   latestQuotesSchema,
   mostActivesSchema,
   moversSchema,
@@ -179,6 +182,13 @@ export interface BarsRequest {
   readonly adjustment?: "raw" | "split" | "dividend" | "all";
   readonly feed?: AlpacaFeed;
   readonly sort?: "asc" | "desc";
+  /**
+   * Which date's tickers the symbols mean. By default Alpaca maps each symbol to whatever holds it
+   * today and returns that company's whole history, so META in 2021 comes back as Facebook. "-" turns the
+   * mapping off: each symbol returns what traded under it at the time, which is what a point-in-time
+   * backtest needs.
+   */
+  readonly asof?: string;
   /** Resume from a page token a previous page returned. */
   readonly pageToken?: string;
 }
@@ -201,6 +211,17 @@ export interface NewsRequest {
   readonly limit?: number;
   readonly sort?: "asc" | "desc";
   readonly includeContent?: boolean;
+  readonly pageToken?: string;
+}
+
+export interface CorporateActionsRequest {
+  readonly types: readonly AlpacaCorporateActionType[];
+  /** ISO dates, inclusive. Alpaca's history thins out before 2019 and is empty for 2016. */
+  readonly start: string;
+  readonly end: string;
+  readonly symbols?: readonly string[];
+  /** Actions per page, at most 1,000. */
+  readonly limit?: number;
   readonly pageToken?: string;
 }
 
@@ -359,6 +380,7 @@ export class AlpacaMarketDataApi {
       adjustment: request.adjustment,
       feed: request.feed ?? this.#feed,
       sort: request.sort,
+      asof: request.asof,
       page_token: request.pageToken,
     });
     return { items: page.bars, nextPageToken: page.next_page_token };
@@ -451,6 +473,27 @@ export class AlpacaMarketDataApi {
 
   async *iterateNews(request: NewsRequest = {}): AsyncGenerator<Page<readonly AlpacaNewsArticle[]>> {
     yield* paginate(request.pageToken, (pageToken) => this.getNewsPage({ ...request, ...pageToken }));
+  }
+
+  /** Mergers, name changes, and the rest, grouped by kind. Kinds the request did not ask for are empty. */
+  async getCorporateActionsPage(request: CorporateActionsRequest): Promise<Page<AlpacaCorporateActions>> {
+    const page = await this.#rest.get("/v1/corporate-actions", corporateActionsPageSchema, {
+      types: request.types,
+      start: request.start,
+      end: request.end,
+      symbols: request.symbols,
+      limit: request.limit,
+      page_token: request.pageToken,
+    });
+    return { items: page.corporate_actions, nextPageToken: page.next_page_token };
+  }
+
+  async *iterateCorporateActions(
+    request: CorporateActionsRequest,
+  ): AsyncGenerator<Page<AlpacaCorporateActions>> {
+    yield* paginate(request.pageToken, (pageToken) =>
+      this.getCorporateActionsPage({ ...request, ...pageToken }),
+    );
   }
 }
 
