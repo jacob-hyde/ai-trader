@@ -18,7 +18,7 @@
 
 import type { AlpacaBar } from "@trader/adapters/alpaca";
 import { type DailyRow, type Dropped, type MinuteRow, toDailyRow, toMinuteRow } from "./convert.js";
-import type { BarSource, Timeframe } from "./source.js";
+import { type BarSource, InvalidSymbolError, type Timeframe } from "./source.js";
 import type { BarStore, Checkpoint } from "./store.js";
 import { type SessionTimes, monthOf, newYorkDate, nextMonth } from "./time.js";
 
@@ -188,8 +188,13 @@ export class BarLoader {
           const job = jobs[next] as Job;
           next += 1;
           try {
-            const rows = await this.#run(timeframe, job, sessions, now(), dropped);
+            const { rows, rejected } = await this.#run(timeframe, job, sessions, now(), dropped);
             result.rows += rows;
+            if (rejected.length > 0) {
+              log(
+                `${timeframe} ${job.fromMonth.slice(0, 7)}: Alpaca does not know ${rejected.join(", ")}, marked empty`,
+              );
+            }
             finished += 1;
             const done = (pass + finished / jobs.length) / passes;
             const eta = Math.round(((Date.now() - started) * (1 - done)) / done / 60_000);
@@ -224,7 +229,7 @@ export class BarLoader {
     sessions: ReadonlyMap<string, SessionTimes>,
     now: Date,
     dropped: Record<Dropped, number>,
-  ): Promise<number> {
+  ): Promise<{ rows: number; rejected: string[] }> {
     // The free data plan refuses SIP bars under 15 minutes old, and nothing that recent is final anyway.
     const latest = new Date(now.getTime() - 16 * 60_000);
     const until = new Date(`${job.untilMonth}T00:00:00Z`);
@@ -233,23 +238,39 @@ export class BarLoader {
       counts.set(unit, { rows: 0, sessions: new Set() });
     }
     const rows: Array<DailyRow | MinuteRow> = [];
-    const query = {
+    const window = {
       timeframe,
-      symbols: job.symbols,
       start: `${job.fromMonth}T00:00:00Z`,
       end: (until < latest ? until : latest).toISOString(),
     };
     // A daily job reads its span twice, as traded and split-adjusted, side by side.
-    const collect = async (adjustment: "raw" | "split") => {
+    const collect = async (symbols: readonly string[], adjustment: "raw" | "split") => {
       const pages: Array<Readonly<Record<string, readonly AlpacaBar[]>>> = [];
-      if (adjustment === "raw" || timeframe === "1Day") {
-        for await (const page of this.#source.bars({ ...query, adjustment })) {
+      if (symbols.length > 0 && (adjustment === "raw" || timeframe === "1Day")) {
+        for await (const page of this.#source.bars({ ...window, symbols, adjustment })) {
           pages.push(page);
         }
       }
       return pages;
     };
-    const [rawPages, splitPages] = await Promise.all([collect("raw"), collect("split")]);
+    // One unknown symbol fails the whole request. Drop it and read the rest again; its months are left
+    // with no bars and a complete checkpoint, so it is never asked for again.
+    let symbols = [...job.symbols];
+    const rejected: string[] = [];
+    let rawPages: Array<Readonly<Record<string, readonly AlpacaBar[]>>> = [];
+    let splitPages: typeof rawPages = [];
+    for (;;) {
+      try {
+        [rawPages, splitPages] = await Promise.all([collect(symbols, "raw"), collect(symbols, "split")]);
+        break;
+      } catch (error) {
+        if (!(error instanceof InvalidSymbolError) || !symbols.includes(error.symbol)) {
+          throw error;
+        }
+        rejected.push(error.symbol);
+        symbols = symbols.filter((symbol) => symbol !== error.symbol);
+      }
+    }
     const adjustedVolume = new Map<string, number>();
     for (const page of splitPages) {
       for (const [symbol, bars] of Object.entries(page)) {
@@ -291,6 +312,6 @@ export class BarLoader {
       };
     });
     await this.#store.writeJob(timeframe, rows, checkpoints);
-    return rows.length;
+    return { rows: rows.length, rejected };
   }
 }

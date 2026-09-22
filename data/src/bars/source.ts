@@ -2,12 +2,13 @@
  * Where the bar store's data comes from. Alpaca in practice; a fake in the tests.
  */
 
-import type {
-  AlpacaAsset,
-  AlpacaBar,
-  AlpacaCalendarDay,
-  AlpacaClient,
-  AlpacaCorporateActions,
+import {
+  type AlpacaAsset,
+  type AlpacaBar,
+  type AlpacaCalendarDay,
+  type AlpacaClient,
+  type AlpacaCorporateActions,
+  AlpacaError,
 } from "@trader/adapters/alpaca";
 
 export type Timeframe = "1Day" | "1Min";
@@ -23,12 +24,27 @@ export interface BarsQuery {
   readonly adjustment: "raw" | "split";
 }
 
+/**
+ * The source refused a symbol it does not know. Alpaca fails the whole request for one bad symbol, and
+ * the asset list does carry a few codes that are not tickers (e.g. "B002455"), so the loader drops the
+ * symbol named here and runs the rest again.
+ */
+export class InvalidSymbolError extends Error {
+  readonly symbol: string;
+
+  constructor(symbol: string, options?: ErrorOptions) {
+    super(`invalid symbol: ${symbol}`, options);
+    this.name = "InvalidSymbolError";
+    this.symbol = symbol;
+  }
+}
+
 export interface BarSource {
   calendar(start: string, end: string): Promise<readonly AlpacaCalendarDay[]>;
   /** Every US equity Alpaca knows, active and inactive. */
   assets(): Promise<readonly AlpacaAsset[]>;
   corporateActions(start: string, end: string): AsyncIterable<AlpacaCorporateActions>;
-  /** Pages of bars keyed by symbol, oldest first within a symbol. */
+  /** Pages of bars keyed by symbol, oldest first within a symbol. Throws InvalidSymbolError for a bad symbol. */
   bars(query: BarsQuery): AsyncIterable<Readonly<Record<string, readonly AlpacaBar[]>>>;
 }
 
@@ -68,8 +84,16 @@ export function alpacaSource(client: AlpacaClient): BarSource {
         asof: "-",
         limit: 10_000,
       });
-      for await (const page of pages) {
-        yield page.items;
+      try {
+        for await (const page of pages) {
+          yield page.items;
+        }
+      } catch (error) {
+        const invalid =
+          error instanceof AlpacaError && error.status === 400
+            ? /invalid symbol: (\S+)/.exec(error.message)
+            : null;
+        throw invalid?.[1] === undefined ? error : new InvalidSymbolError(invalid[1], { cause: error });
       }
     },
   };
