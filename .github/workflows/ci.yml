@@ -39,4 +39,5 @@ jobs:
       - run: pnpm lint
       - run: pnpm format:check
       - run: pnpm migrate:up
-      - run: pnpm test
+      # Runs every test, and fails below 100% coverage on packages/core.
+      - run: pnpm test:coverage

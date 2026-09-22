@@ -29,3 +29,7 @@ apps/web/storage/framework/views/
 # Python bytecode from the fixture generators
 __pycache__/
 *.pyc
+
+# Stryker mutation-testing sandbox and reports
+.stryker-tmp/
+reports/

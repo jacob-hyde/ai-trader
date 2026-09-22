@@ -7,6 +7,7 @@ import {
   SCALE,
   SUB_PENNY,
   ZERO,
+  abs,
   add,
   compare,
   divInt,
@@ -186,6 +187,18 @@ describe("addition and subtraction", () => {
     expect(compare(fixed(1), fixed(2))).toBe(-1);
     expect(compare(fixed(2), fixed(2))).toBe(0);
     expect(compare(fixed(3), fixed(2))).toBe(1);
+  });
+
+  it("takes the magnitude, never returning negative zero", () => {
+    expect(abs(fixed(-1_500))).toBe(1_500);
+    expect(abs(fixed(1_500))).toBe(1_500);
+    expect(Object.is(abs(fixed(0)), 0)).toBe(true);
+    fc.assert(
+      fc.property(fixedArb, (a) => {
+        expect(abs(a)).toBe(abs(neg(a)));
+        expect(abs(a)).toBeGreaterThanOrEqual(0);
+      }),
+    );
   });
 });
 
