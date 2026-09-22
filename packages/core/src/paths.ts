@@ -66,6 +66,12 @@ export interface PathConfig {
   readonly spread: SpreadDistribution;
   /** Entry-to-stop distance the scripted scenarios are written around. Ignored by driftlessWalk. */
   readonly stopDistance: Fixed;
+  /**
+   * Price moves inside each bar of the walk. Sets how far a jump through a level overshoots it: 5 is
+   * coarse and quick, 60 is one move a second and makes the overshoot tick-sized, as it is in real
+   * minute bars. The tripwire needs the fine setting or the overshoot alone reads as an edge.
+   */
+  readonly stepsPerBar: number;
 }
 
 export const DEFAULT_PATH_CONFIG: Omit<PathConfig, "seed" | "scenario"> = {
@@ -75,6 +81,7 @@ export const DEFAULT_PATH_CONFIG: Omit<PathConfig, "seed" | "scenario"> = {
   volatilityBps: 10,
   spread: { minTicks: 1, maxTicks: 4 },
   stopDistance: fixed(1_500),
+  stepsPerBar: 5,
 };
 
 export interface SyntheticPath {
@@ -131,7 +138,6 @@ export function createRng(seed: number): Rng {
   };
 }
 
-const STEPS_PER_BAR = 5;
 const FLOOR_PRICE = 10_000;
 const TICK = PENNY;
 
@@ -156,6 +162,9 @@ function assertConfig(config: PathConfig): void {
   }
   if (config.session.length === 0) {
     problems.push("session is empty");
+  }
+  if (!whole(config.stepsPerBar, 1) || config.stepsPerBar > 600) {
+    problems.push("stepsPerBar must be a whole number from 1 to 600");
   }
   if (problems.length > 0) {
     throw new PathError(problems.join("; "));
@@ -210,12 +219,13 @@ class Session {
 
   /** One bar of the driftless walk: a few multiplicative steps, tracked for the high and low. */
   walk(): void {
-    const sigma = this.#config.volatilityBps / 10_000 / Math.sqrt(STEPS_PER_BAR);
+    const steps = this.#config.stepsPerBar;
+    const sigma = this.#config.volatilityBps / 10_000 / Math.sqrt(steps);
     const open = this.price;
     let last = open;
     let high = open;
     let low = open;
-    for (let step = 0; step < STEPS_PER_BAR; step += 1) {
+    for (let step = 0; step < steps; step += 1) {
       last = Math.max(FLOOR_PRICE, last * (1 + sigma * this.#rng.normal()));
       high = Math.max(high, last);
       low = Math.min(low, last);

@@ -176,6 +176,9 @@ describe("generatePath", () => {
       { stopDistance: fixed(1_550) },
       { stopDistance: fixed(60_000) },
       { session: "" },
+      { stepsPerBar: 0 },
+      { stepsPerBar: 601 },
+      { stepsPerBar: 2.5 },
     ];
     for (const overrides of bad) {
       expect(() => path("driftlessWalk", 1, overrides), JSON.stringify(overrides)).toThrow(PathError);
@@ -204,6 +207,25 @@ describe("driftlessWalk", () => {
       return Math.max(...closes) - Math.min(...closes);
     };
     expect(spreadOf(30)).toBeGreaterThan(2 * spreadOf(5));
+  });
+
+  it("takes more, smaller moves per bar as stepsPerBar rises, with the same per-bar volatility", () => {
+    const rangeOf = (stepsPerBar: number) => {
+      const bars = path("driftlessWalk", 4, { stepsPerBar, volatilityBps: 50 });
+      const closes = bars.bars.map((bar) => bar.close);
+      const gaps = closes.slice(1).map((close, i) => Math.abs(close - (closes[i] as number)));
+      return {
+        day: Math.max(...closes) - Math.min(...closes),
+        typicalStep: gaps.reduce((a, b) => a + b, 0) / gaps.length,
+      };
+    };
+    const coarse = rangeOf(5);
+    const fine = rangeOf(60);
+    expect(fine.day).toBeGreaterThan(coarse.day / 3);
+    expect(fine.day).toBeLessThan(coarse.day * 3);
+    expect(fine.typicalStep).toBeGreaterThan(coarse.typicalStep / 3);
+    expect(fine.typicalStep).toBeLessThan(coarse.typicalStep * 3);
+    expect(path("driftlessWalk", 4, { stepsPerBar: 60 }).bars).not.toEqual(path("driftlessWalk", 4).bars);
   });
 
   it("never goes below the one dollar floor, even at absurd volatility", () => {
