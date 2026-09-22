@@ -14,6 +14,11 @@ const Env = z.object({
   ALPACA_SECRET_KEY: z.string().min(1),
   ALPACA_BASE_URL: z.string().url(),
   ALPACA_DATA_URL: z.string().url().default("https://data.alpaca.markets"),
+  ALPACA_STREAM_URL: z.string().url().default("wss://stream.data.alpaca.markets"),
+  // iex until the SIP subscription starts (M.1). The free plan refuses SIP data under 15 minutes old.
+  ALPACA_DATA_FEED: z.enum(["iex", "sip", "delayed_sip"]).default("iex"),
+  // The data plan's per-minute limit: 200 on Basic, 10000 on Algo Trader Plus.
+  ALPACA_DATA_RATE_LIMIT: z.coerce.number().int().min(2).default(200),
   DATABASE_URL: z.string().min(1),
   REDIS_URL: z.string().min(1),
   NTFY_TOPIC: z.string().optional(),

@@ -30,6 +30,7 @@ docker compose up -d db redis
 pnpm migrate:up             # schema owner: Timescale extension, data-only engine role, tables
 pnpm typecheck && pnpm lint && pnpm test
 pnpm engine                 # boots the engine, prints the mode banner, pings Alpaca
+pnpm alpaca:smoke           # read-only check of every Alpaca endpoint and both websockets (paper only)
 ```
 
 `.env` is gitignored. Keys never go in the database or the UI. The engine connects with a data-only

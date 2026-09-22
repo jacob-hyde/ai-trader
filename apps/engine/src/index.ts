@@ -1,5 +1,5 @@
 import { CORE_VERSION } from "@trader/core";
-import { AlpacaClient } from "./alpaca/client.js";
+import { createAlpacaClient } from "./alpaca.js";
 import { loadConfig } from "./config.js";
 
 // Boot smoke test: validate env, announce the mode, prove the broker connection. Trading loops land later.
@@ -10,8 +10,8 @@ if (cfg.TRADING_MODE === "live") {
   console.log("[engine] *** LIVE TRADING MODE. REAL MONEY. ***");
 }
 
-const alpaca = new AlpacaClient(cfg);
-const [clock, account] = await Promise.all([alpaca.getClock(), alpaca.getAccount()]);
+const alpaca = createAlpacaClient(cfg);
+const [clock, account] = await Promise.all([alpaca.trading.getClock(), alpaca.trading.getAccount()]);
 
 console.log(
   `[alpaca] market=${clock.is_open ? "OPEN" : "CLOSED"} next_open=${clock.next_open} next_close=${clock.next_close}`,

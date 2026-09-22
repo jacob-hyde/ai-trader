@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "tsx src/index.ts",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "alpaca:smoke": "tsx src/scripts/alpacaSmoke.ts"
   },
   "dependencies": {
     "@trader/adapters": "workspace:*",

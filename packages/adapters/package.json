@@ -8,6 +8,11 @@
       "types": "./src/index.ts",
       "import": "./src/index.ts",
       "default": "./src/index.ts"
+    },
+    "./alpaca": {
+      "types": "./src/alpaca/index.ts",
+      "import": "./src/alpaca/index.ts",
+      "default": "./src/alpaca/index.ts"
     }
   },
   "scripts": {
@@ -15,9 +20,13 @@
   },
   "dependencies": {
     "@trader/contracts": "workspace:*",
-    "@trader/core": "workspace:*"
+    "@trader/core": "workspace:*",
+    "ws": "^8.21.3",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@types/node": "^22.20.3",
+    "@types/ws": "^8.18.1",
     "typescript": "^5.6.3"
   }
 }
