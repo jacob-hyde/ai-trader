@@ -20,6 +20,7 @@
  * Symmetric for shorts: the stop sits above entry and the distance is the same absolute value.
  */
 
+import type { Direction } from "@trader/contracts";
 import {
   type Fixed,
   type Ratio,
@@ -31,7 +32,7 @@ import {
   sub,
 } from "./money.js";
 
-export type Direction = "long" | "short";
+export type { Direction };
 
 export type SizingRegime =
   | { readonly kind: "validation"; readonly maxShares: number; readonly maxNotional: Fixed }
