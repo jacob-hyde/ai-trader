@@ -1,0 +1,25 @@
+name: nightly
+
+on:
+  schedule:
+    # 09:00 UTC, after the US close and before the next open.
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+
+jobs:
+  invariants:
+    runs-on: ubuntu-latest
+    env:
+      # The full-scale run. The push-time CI runs the same suite at 2,000.
+      INVARIANT_PATHS: "100000"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm vitest run --config vitest.core.config.ts packages/core/src/invariants.test.ts
