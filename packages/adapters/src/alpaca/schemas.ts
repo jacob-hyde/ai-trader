@@ -385,3 +385,48 @@ export const newsPageSchema = z.object({
   news: z.array(newsArticleSchema),
   next_page_token: pageToken,
 });
+
+export type AlpacaCorporateActionType =
+  "cash_merger" | "stock_merger" | "stock_and_cash_merger" | "name_change" | "worthless_removal";
+
+const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+
+/** A merger: the acquiree's ticker stops trading on the effective date. */
+const mergerSchema = z.object({
+  acquiree_symbol: z.string(),
+  acquirer_symbol: nullish(z.string()),
+  effective_date: nullish(date),
+  process_date: nullish(date),
+});
+
+const nameChangeSchema = z.object({
+  old_symbol: z.string(),
+  new_symbol: z.string(),
+  process_date: nullish(date),
+});
+
+/** A security removed as worthless, e.g. after a bankruptcy. */
+const worthlessRemovalSchema = z.object({
+  symbol: z.string(),
+  process_date: nullish(date),
+});
+
+const actionList = <T extends z.ZodTypeAny>(schema: T) =>
+  z
+    .array(schema)
+    .optional()
+    .transform((list): Array<z.output<T>> => list ?? []);
+
+export const corporateActionsSchema = z.object({
+  cash_mergers: actionList(mergerSchema),
+  stock_mergers: actionList(mergerSchema),
+  stock_and_cash_mergers: actionList(mergerSchema),
+  name_changes: actionList(nameChangeSchema),
+  worthless_removals: actionList(worthlessRemovalSchema),
+});
+export type AlpacaCorporateActions = z.output<typeof corporateActionsSchema>;
+
+export const corporateActionsPageSchema = z.object({
+  corporate_actions: corporateActionsSchema,
+  next_page_token: pageToken,
+});

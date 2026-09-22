@@ -79,13 +79,36 @@ describe.skipIf(!ownerUrl || !engineUrl)("A.4 migrations and TimescaleDB", () =>
     }
   });
 
-  it("reverts and re-applies the latest migration", async () => {
-    await runner({ ...base, direction: "down", count: 1 });
-    const gone = await owner.query("SELECT 1 FROM pg_proc WHERE proname = 'trader_make_hypertable'");
-    expect(gone.rowCount).toBe(0);
+  // In a throwaway database: reverting the bar store in the shared one would drop every loaded bar, and
+  // race any test writing bars at the same moment. Stops short of the engine role, which is cluster-wide.
+  it("reverts and re-applies the migrations above the engine role", { timeout: 60_000 }, async () => {
+    const scratch = `trader_a4_${Date.now()}`;
+    await owner.query(`CREATE DATABASE ${scratch}`);
+    const url = new URL(ownerUrl);
+    url.pathname = `/${scratch}`;
+    const scratchBase = { ...base, databaseUrl: url.toString() };
+    const client = new pg.Client({ connectionString: url.toString() });
+    try {
+      await runner({ ...scratchBase, direction: "up", count: Number.POSITIVE_INFINITY });
+      await client.connect();
+      const present = async (): Promise<boolean[]> => {
+        const result = await client.query<{ fn: boolean; bars: boolean }>(
+          `SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'trader_make_hypertable') AS fn,
+             to_regclass('bars_1m') IS NOT NULL AS bars`,
+        );
+        const row = result.rows[0];
+        return [row?.fn ?? false, row?.bars ?? false];
+      };
+      expect(await present()).toEqual([true, true]);
 
-    await runner({ ...base, direction: "up", count: Number.POSITIVE_INFINITY });
-    const back = await owner.query("SELECT 1 FROM pg_proc WHERE proname = 'trader_make_hypertable'");
-    expect(back.rowCount).toBe(1);
+      await runner({ ...scratchBase, direction: "down", count: 2 });
+      expect(await present()).toEqual([false, false]);
+
+      await runner({ ...scratchBase, direction: "up", count: Number.POSITIVE_INFINITY });
+      expect(await present()).toEqual([true, true]);
+    } finally {
+      await client.end();
+      await owner.query(`DROP DATABASE IF EXISTS ${scratch} WITH (FORCE)`);
+    }
   });
 });

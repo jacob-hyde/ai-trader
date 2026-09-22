@@ -17,7 +17,8 @@
     "migrate:up": "pnpm --filter @trader/data migrate:up",
     "migrate:down": "pnpm --filter @trader/data migrate:down",
     "migrate:status": "pnpm --filter @trader/data migrate:status",
-    "migrate:create": "pnpm --filter @trader/data migrate:create"
+    "migrate:create": "pnpm --filter @trader/data migrate:create",
+    "bars": "pnpm --filter @trader/data bars"
   },
   "devDependencies": {
     "@eslint/js": "^9.12.0",

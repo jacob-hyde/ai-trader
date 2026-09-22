@@ -465,6 +465,54 @@ describe("AlpacaClient REST", () => {
     ]);
   });
 
+  it("turns symbol mapping off on request, for ticker-at-time bars", async () => {
+    const { alpaca, calls } = client(() => json({ bars: {}, next_page_token: null }));
+    await alpaca.data.getBarsPage({ symbols: ["FB"], timeframe: "1Day", start: "2021-06-01", asof: "-" });
+    expect(calls[0]?.url.searchParams.get("asof")).toBe("-");
+  });
+
+  it("reads corporate actions page by page, with absent kinds as empty lists", async () => {
+    const pages: Record<string, unknown> = {
+      "": {
+        corporate_actions: {
+          cash_mergers: [
+            {
+              acquiree_symbol: "TWTR",
+              acquiree_cusip: "90184L102",
+              effective_date: "2022-10-28",
+              rate: 54.2,
+            },
+          ],
+          name_changes: [{ old_symbol: "FB", new_symbol: "META", process_date: "2022-06-09" }],
+          forward_splits: [{ symbol: "NVDA" }],
+        },
+        next_page_token: "p2",
+      },
+      p2: { corporate_actions: { worthless_removals: [{ symbol: "SIVBQ" }] }, next_page_token: null },
+    };
+    const { alpaca, calls } = client((call) => json(pages[call.url.searchParams.get("page_token") ?? ""]));
+    const seen = [];
+    for await (const page of alpaca.data.iterateCorporateActions({
+      types: ["cash_merger", "name_change", "worthless_removal"],
+      start: "2022-01-01",
+      end: "2022-12-31",
+      limit: 1_000,
+    })) {
+      seen.push(page.items);
+    }
+    expect(seen[0]?.cash_mergers[0]).toEqual({
+      acquiree_symbol: "TWTR",
+      acquirer_symbol: null,
+      effective_date: "2022-10-28",
+      process_date: null,
+    });
+    expect(seen[0]?.stock_mergers).toEqual([]);
+    expect(seen[1]?.worthless_removals).toEqual([{ symbol: "SIVBQ", process_date: null }]);
+    expect(calls[0]?.url.search).toBe(
+      "?types=cash_merger%2Cname_change%2Cworthless_removal&start=2022-01-01&end=2022-12-31&limit=1000",
+    );
+  });
+
   it("refuses bad client options", () => {
     const base = { keyId: KEY, secretKey: SECRET, tradingUrl: TRADING };
     expect(() => new AlpacaClient({ ...base, maxAttempts: 0 })).toThrow(RangeError);
