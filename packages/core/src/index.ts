@@ -16,6 +16,7 @@ export * from "./bars.js";
 export * from "./brackets.js";
 export * from "./costToRisk.js";
 export * from "./costs.js";
+export * from "./decision.js";
 export * from "./indicators.js";
 export * from "./money.js";
 export * from "./noopSetup.js";
