@@ -13,6 +13,7 @@
     "test:coverage": "vitest run --coverage",
     "test:mutation": "stryker run",
     "engine": "pnpm --filter @trader/engine dev",
+    "alpaca:smoke": "pnpm --filter @trader/engine alpaca:smoke",
     "migrate:up": "pnpm --filter @trader/data migrate:up",
     "migrate:down": "pnpm --filter @trader/data migrate:down",
     "migrate:status": "pnpm --filter @trader/data migrate:status",
