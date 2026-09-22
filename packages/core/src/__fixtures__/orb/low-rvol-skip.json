@@ -1,0 +1,21 @@
+{
+  "fixtureVersion": 1,
+  "setup": "orb@1.0.0",
+  "description": "A clean bullish range and breakout on a name trading 90% of its usual opening volume. The edge lives in the relative-volume gate, so there is no signal.",
+  "costModel": "default",
+  "session": "2026-01-05",
+  "symbol": "AAA",
+  "dailyAtr": "1.50",
+  "openingRvol": 0.9,
+  "shares": 25,
+  "flattenMinute": 380,
+  "variants": [
+    {
+      "name": "published",
+      "params": {},
+      "expect": {
+        "signal": null
+      }
+    }
+  ]
+}

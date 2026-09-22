@@ -1,0 +1,40 @@
+{
+  "fixtureVersion": 1,
+  "setup": "orb@1.0.0",
+  "description": "A bullish range, a breakout at 09:37, and a trend that runs to the flatten. The published variant: 10% ATR stop, no target. One of the rare big winners the whole expectancy rests on.",
+  "costModel": "default",
+  "session": "2026-01-05",
+  "symbol": "AAA",
+  "dailyAtr": "1.50",
+  "openingRvol": 2.5,
+  "shares": 25,
+  "flattenMinute": 380,
+  "variants": [
+    {
+      "name": "published",
+      "params": {},
+      "expect": {
+        "signal": {
+          "direction": "long",
+          "entry": "20.30",
+          "minute": 4
+        },
+        "stop": "20.15",
+        "target": null,
+        "breakevenAtR": null,
+        "outcome": {
+          "filled": true,
+          "entryMinute": 7,
+          "entryReference": "20.30",
+          "entryFill": "20.3306",
+          "exitMinute": 380,
+          "exitReason": "eod",
+          "exitReference": "21.50",
+          "exitFill": "21.4792",
+          "grossR": 80000,
+          "netR": 76573
+        }
+      }
+    }
+  ]
+}

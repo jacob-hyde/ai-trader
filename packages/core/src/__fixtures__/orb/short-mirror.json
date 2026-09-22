@@ -1,0 +1,49 @@
+{
+  "fixtureVersion": 1,
+  "setup": "orb@1.0.0",
+  "description": "A bearish range and a breakdown. With shorts off, which is the default and v1, there is no signal. With allowShort the mirror is produced: entry at the range low, stop above it.",
+  "costModel": "default",
+  "session": "2026-01-05",
+  "symbol": "AAA",
+  "dailyAtr": "1.50",
+  "openingRvol": 2.5,
+  "shares": 25,
+  "flattenMinute": 380,
+  "variants": [
+    {
+      "name": "published-shorts-off",
+      "params": {},
+      "expect": {
+        "signal": null
+      }
+    },
+    {
+      "name": "shorts-allowed",
+      "params": {
+        "allowShort": true
+      },
+      "expect": {
+        "signal": {
+          "direction": "short",
+          "entry": "19.70",
+          "minute": 4
+        },
+        "stop": "19.85",
+        "target": null,
+        "breakevenAtR": null,
+        "outcome": {
+          "filled": true,
+          "entryMinute": 5,
+          "entryReference": "19.70",
+          "entryFill": "19.6701",
+          "exitMinute": 380,
+          "exitReason": "eod",
+          "exitReference": "19.10",
+          "exitFill": "19.1196",
+          "grossR": 40000,
+          "netR": 36700
+        }
+      }
+    }
+  ]
+}

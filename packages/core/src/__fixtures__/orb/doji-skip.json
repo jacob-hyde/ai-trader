@@ -1,0 +1,21 @@
+{
+  "fixtureVersion": 1,
+  "setup": "orb@1.0.0",
+  "description": "The range closes exactly where it opened. No direction, no trade, even though price breaks out right after.",
+  "costModel": "default",
+  "session": "2026-01-05",
+  "symbol": "AAA",
+  "dailyAtr": "1.50",
+  "openingRvol": 2.5,
+  "shares": 25,
+  "flattenMinute": 380,
+  "variants": [
+    {
+      "name": "published",
+      "params": {},
+      "expect": {
+        "signal": null
+      }
+    }
+  ]
+}
