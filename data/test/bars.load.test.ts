@@ -12,7 +12,7 @@ import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BarLoader, type Unit } from "../src/bars/loader.js";
 import { compressNow } from "../src/bars/maintenance.js";
-import type { BarSource, BarsQuery } from "../src/bars/source.js";
+import { type BarSource, type BarsQuery, InvalidSymbolError } from "../src/bars/source.js";
 import { BarStore } from "../src/bars/store.js";
 import { fromAssets } from "../src/bars/symbols.js";
 import { sessionTimes } from "../src/bars/time.js";
@@ -28,6 +28,8 @@ const engineUrl = process.env["DATABASE_URL"] ?? "";
 const LIVE = "ZZTLIVE";
 const GONE = "ZZTGONE";
 const HOLE = "ZZTHOLE";
+/** A code from the asset list that Alpaca's bars endpoint refuses, like "B002455". */
+const BAD = "ZZTBAD";
 const SYMBOLS = [LIVE, GONE, HOLE];
 
 /** January and February 2021 as Alpaca's calendar has them: weekdays, less New Year, MLK, and Presidents' Day. */
@@ -81,6 +83,9 @@ class FakeAlpaca implements BarSource {
     this.queries.push(query);
     if (this.failOn === this.queries.length) {
       throw new Error("connection reset");
+    }
+    if (query.symbols.includes(BAD)) {
+      throw new InvalidSymbolError(BAD);
     }
     const start = Date.parse(query.start);
     const end = Date.parse(query.end);
@@ -155,7 +160,7 @@ describe.skipIf(!ownerUrl || !engineUrl)("H.7 bar store", () => {
   const cleanup = async (): Promise<void> => {
     await owner.query("DELETE FROM bars_1m WHERE symbol = ANY($1)", [SYMBOLS]);
     await owner.query("DELETE FROM bars_1d WHERE symbol = ANY($1)", [SYMBOLS]);
-    await owner.query("DELETE FROM bar_load_checkpoints WHERE symbol = ANY($1)", [SYMBOLS]);
+    await owner.query("DELETE FROM bar_load_checkpoints WHERE symbol = ANY($1)", [[...SYMBOLS, BAD]]);
     await owner.query("DELETE FROM symbols WHERE symbol = ANY($1)", [SYMBOLS]);
     await owner.query("DELETE FROM asset_snapshots WHERE symbol = ANY($1)", [SYMBOLS]);
   };
@@ -256,6 +261,30 @@ describe.skipIf(!ownerUrl || !engineUrl)("H.7 bar store", () => {
       [GONE],
     );
     expect(range.rows).toEqual([{ last: "2021-02-10" }]);
+  });
+
+  it("drops a symbol Alpaca refuses, loads the rest of its job, and never asks for it again", async () => {
+    const lines: string[] = [];
+    const fake = new FakeAlpaca();
+    const result = await new BarLoader(fake, store).load({
+      timeframe: "1Day",
+      units: { symbols: [BAD, LIVE], months: ["2021-01-01"] },
+      now: later,
+      log: (line) => lines.push(line),
+    });
+    expect(result).toMatchObject({ failedJobs: 0, jobs: 1 });
+    expect(lines).toContain(`1Day 2021-01: Alpaca does not know ${BAD}, marked empty`);
+    const bad = await pool.query("SELECT status, rows FROM bar_load_checkpoints WHERE symbol = $1", [BAD]);
+    expect(bad.rows).toEqual([{ status: "complete", rows: 0 }]);
+
+    const quiet = new FakeAlpaca();
+    const again = await new BarLoader(quiet, store).load({
+      timeframe: "1Day",
+      units: { symbols: [BAD, LIVE], months: ["2021-01-01"] },
+      now: later,
+    });
+    expect(again).toMatchObject({ jobs: 0, skipped: 2 });
+    expect(quiet.queries).toEqual([]);
   });
 
   it("writes a month still in progress as partial and fetches it again", async () => {

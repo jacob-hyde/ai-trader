@@ -1,7 +1,8 @@
-import type { AlpacaAsset, AlpacaBar } from "@trader/adapters/alpaca";
+import { type AlpacaAsset, type AlpacaBar, AlpacaClient } from "@trader/adapters/alpaca";
 import { describe, expect, it } from "vitest";
 import { type DailyRow, toDailyRow, toMinuteRow, units } from "../src/bars/convert.js";
 import { planJobs } from "../src/bars/loader.js";
+import { InvalidSymbolError, alpacaSource } from "../src/bars/source.js";
 import { fromAssets, fromCorporateActions, fromFile, isTicker } from "../src/bars/symbols.js";
 import {
   monthOf,
@@ -333,5 +334,41 @@ describe("planning jobs", () => {
       [["A"], "2021-01-01", "2021-02-01"],
       [["A", "B"], "2021-02-01", "2021-03-01"],
     ]);
+  });
+});
+
+describe("the Alpaca source", () => {
+  const source = (status: number, message: string) =>
+    alpacaSource(
+      new AlpacaClient({
+        keyId: "k",
+        secretKey: "s",
+        tradingUrl: "https://paper-api.example",
+        maxAttempts: 1,
+        fetch: (() => Promise.resolve(new Response(JSON.stringify({ message }), { status }))) as typeof fetch,
+      }),
+    );
+  const read = async (s: ReturnType<typeof source>) => {
+    const query = {
+      timeframe: "1Day",
+      symbols: ["A"],
+      start: "2021-01-01",
+      end: "2021-02-01",
+      adjustment: "raw",
+    } as const;
+    for await (const _page of s.bars(query)) {
+      // Every request here fails before a page arrives.
+    }
+  };
+
+  it("names the symbol Alpaca refused, so the loader can drop it", async () => {
+    const error = await read(source(400, "invalid symbol: B002455")).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(InvalidSymbolError);
+    expect((error as InvalidSymbolError).symbol).toBe("B002455");
+  });
+
+  it("lets every other failure through as it was", async () => {
+    await expect(read(source(400, "invalid timeframe"))).rejects.not.toBeInstanceOf(InvalidSymbolError);
+    await expect(read(source(403, "invalid symbol: X"))).rejects.toThrow("403");
   });
 });
