@@ -10,8 +10,9 @@ jobs:
   invariants:
     runs-on: ubuntu-latest
     env:
-      # The full-scale run. The push-time CI runs the same suite at 2,000.
+      # The full-scale runs. The push-time CI runs the same suites at 2,000 and 5,000.
       INVARIANT_PATHS: "100000"
+      NULL_MODEL_PATHS: "100000"
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -23,3 +24,4 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm vitest run --config vitest.core.config.ts packages/core/src/invariants.test.ts
+      - run: pnpm vitest run --config vitest.core.config.ts packages/core/src/nullModel.test.ts
