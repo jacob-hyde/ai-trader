@@ -41,6 +41,9 @@ importers:
 
   apps/engine:
     dependencies:
+      '@trader/adapters':
+        specifier: workspace:*
+        version: link:../../packages/adapters
       '@trader/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -94,6 +97,9 @@ importers:
       '@trader/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@trader/core':
+        specifier: workspace:*
+        version: link:../core
     devDependencies:
       typescript:
         specifier: ^5.6.3
