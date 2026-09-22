@@ -17,6 +17,7 @@
  * they throw CostModelError. A crossed quote throws MoneyError CROSSED_MARKET from the spread helper.
  */
 
+import type { Quote, Side } from "@trader/contracts";
 import {
   type Fixed,
   type Ratio,
@@ -31,15 +32,10 @@ import {
   tickSize,
 } from "./money.js";
 
-export type Side = "buy" | "sell";
+export type { Quote, Side };
 
 /** What triggered the order. Decides which slippage allowance applies. */
 export type FillKind = "market" | "stopEntry" | "stopExit";
-
-export interface Quote {
-  readonly bid: Fixed;
-  readonly ask: Fixed;
-}
 
 /** Per-share slippage beyond the touch: the larger of bps of price and a whole number of ticks. */
 export interface SlippageAllowance {

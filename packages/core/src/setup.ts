@@ -18,11 +18,9 @@
  * sizing, the risk rules, and the bracket builder consume in turn.
  */
 
+import type { Bar, Direction, EntryType, Quote, SetupSignal } from "@trader/contracts";
 import type { z } from "zod";
-import type { Bar } from "./bars.js";
-import type { Quote } from "./costs.js";
 import type { Fixed, Ratio } from "./money.js";
-import type { Direction } from "./sizing.js";
 
 /** History the engine must have replayed before a setup's answers can be trusted. */
 export interface WarmupRequirements {
@@ -72,27 +70,7 @@ export interface MarketState {
 export type ContextVerdict =
   { readonly applies: true } | { readonly applies: false; readonly reasons: readonly string[] };
 
-/** How the entry order rests at the broker. The cost model prices a stop entry pessimistically. */
-export type EntryType = "stop" | "limit" | "market";
-
-/** An exact entry condition that has been met on closed bars. Carries no size, stop, or target. */
-export interface SetupSignal {
-  readonly setupId: string;
-  readonly setupVersion: string;
-  readonly symbol: string;
-  readonly direction: Direction;
-  readonly session: string;
-  /** Minute of the closed bar that completed the condition. */
-  readonly minuteOfSession: number;
-  readonly entryType: EntryType;
-  /** Trigger price for a stop entry, limit price for a limit entry, reference price for a market entry. */
-  readonly entry: Fixed;
-  /**
-   * Named prices the setup measured, e.g. the opening range's high and low. Is how stop and target
-   * reach what detectTrigger saw without being handed the bars again, and what the decision log shows.
-   */
-  readonly levels: Readonly<Record<string, Fixed>>;
-}
+export type { EntryType, SetupSignal };
 
 /** How an open position is managed after the fill. Acted on by the position monitor, never by the setup. */
 export interface PositionManagement {

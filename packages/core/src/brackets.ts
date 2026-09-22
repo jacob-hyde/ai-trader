@@ -20,28 +20,11 @@
  * after an equity change is still the same trade.
  */
 
-import type { Side } from "./costs.js";
-import { type Fixed, PENNY, add, roundToTick, sub } from "./money.js";
+import type { BracketEntry, BracketOrder } from "@trader/contracts";
+import { PENNY, add, roundToTick, sub } from "./money.js";
 import type { TradePlan } from "./setup.js";
 
-export type BracketEntry =
-  | { readonly type: "stop"; readonly stopPrice: Fixed }
-  | { readonly type: "limit"; readonly limitPrice: Fixed }
-  | { readonly type: "market" };
-
-export interface BracketOrder {
-  readonly clientOrderId: string;
-  readonly symbol: string;
-  /** Side of the entry. The exits are the opposite side. */
-  readonly side: Side;
-  readonly quantity: number;
-  readonly timeInForce: "day";
-  /** "bracket" carries both exits. "oto" carries the stop-loss only. */
-  readonly orderClass: "bracket" | "oto";
-  readonly entry: BracketEntry;
-  readonly stopLoss: { readonly stopPrice: Fixed };
-  readonly takeProfit: { readonly limitPrice: Fixed } | null;
-}
+export type { BracketEntry, BracketOrder };
 
 /** Every rejection code, in the order a result reports them. Stable. */
 export const BRACKET_REJECTION_REASONS = [

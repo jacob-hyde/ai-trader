@@ -11,32 +11,26 @@
  *
  * Ratios (percentages, spreads, risk fractions) are a separate brand at the same scale, which makes one
  * unit exactly one basis point.
+ *
+ * The brands, the constructors, and MoneyError are defined in @trader/contracts, the shared vocabulary,
+ * and re-exported here so the arithmetic and its callers speak the same types.
  */
 
-/** Dollar amount or price in units of $0.0001. Always a safe integer. */
-export type Fixed = number & { readonly __brand: "Fixed" };
+import {
+  type Fixed,
+  type Ratio,
+  MoneyError,
+  type MoneyErrorCode,
+  SCALE,
+  fixed,
+  ratio,
+} from "@trader/contracts";
 
-/** Dimensionless ratio in basis points: 1 is 0.01%, 10 000 is 100%. Always a safe integer. */
-export type Ratio = number & { readonly __brand: "Ratio" };
+export { type Fixed, type Ratio, MoneyError, type MoneyErrorCode, SCALE, fixed, ratio };
 
 /** How a lossy division resolves. "nearest" is half away from zero: 2.5 becomes 3 and -2.5 becomes -3. */
 export type RoundingMode = "floor" | "ceil" | "trunc" | "nearest";
 
-export type MoneyErrorCode =
-  "NOT_INTEGER" | "OUT_OF_RANGE" | "PARSE" | "DIVIDE_BY_ZERO" | "CROSSED_MARKET" | "NEGATIVE_QUANTITY";
-
-export class MoneyError extends Error {
-  readonly code: MoneyErrorCode;
-
-  constructor(code: MoneyErrorCode, message: string) {
-    super(message);
-    this.name = "MoneyError";
-    this.code = code;
-  }
-}
-
-/** Units per dollar. */
-export const SCALE = 10_000;
 const SCALE_BIG = 10_000n;
 const MAX_SAFE_BIG = BigInt(Number.MAX_SAFE_INTEGER);
 const MIN_SAFE_BIG = -MAX_SAFE_BIG;
@@ -92,18 +86,6 @@ function divide(numerator: bigint, denominator: bigint, mode: RoundingMode): big
       return negative ? quotient - 1n : quotient + 1n;
     }
   }
-}
-
-/** Brands an integer count of $0.0001 units. Rejects anything that isn't a safe integer, including -0. */
-export function fixed(units: number): Fixed {
-  assertInteger(units, "Fixed units");
-  return (units === 0 ? 0 : units) as Fixed;
-}
-
-/** Brands an integer count of basis points. */
-export function ratio(basisPoints: number): Ratio {
-  assertInteger(basisPoints, "Ratio units");
-  return (basisPoints === 0 ? 0 : basisPoints) as Ratio;
 }
 
 export function fromCents(cents: number): Fixed {
