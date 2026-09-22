@@ -8,6 +8,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@trader/adapters": "workspace:*",
     "@trader/contracts": "workspace:*",
     "@trader/core": "workspace:*",
     "dotenv": "^16.4.5",
