@@ -1,0 +1,40 @@
+{
+  "fixtureVersion": 1,
+  "setup": "orb@1.0.0",
+  "description": "Filled at 09:35, then the next bar opens 25 cents under the stop. The exit fills at that open, not at the stop, so the loss is 2.67R gross instead of 1R.",
+  "costModel": "default",
+  "session": "2026-01-05",
+  "symbol": "AAA",
+  "dailyAtr": "1.50",
+  "openingRvol": 2.5,
+  "shares": 25,
+  "flattenMinute": 380,
+  "variants": [
+    {
+      "name": "published",
+      "params": {},
+      "expect": {
+        "signal": {
+          "direction": "long",
+          "entry": "20.30",
+          "minute": 4
+        },
+        "stop": "20.15",
+        "target": null,
+        "breakevenAtR": null,
+        "outcome": {
+          "filled": true,
+          "entryMinute": 5,
+          "entryReference": "20.30",
+          "entryFill": "20.3306",
+          "exitMinute": 6,
+          "exitReason": "stop",
+          "exitReference": "19.90",
+          "exitFill": "19.8700",
+          "grossR": -26667,
+          "netR": -30707
+        }
+      }
+    }
+  ]
+}

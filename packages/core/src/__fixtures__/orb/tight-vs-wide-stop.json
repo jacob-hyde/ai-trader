@@ -1,0 +1,70 @@
+{
+  "fixtureVersion": 1,
+  "setup": "orb@1.0.0",
+  "description": "The same bars under both stops. Price dips 22 cents after the fill and then trends all day. The published 10% ATR stop is taken out on the dip. The range-low stop survives it and rides to the flatten, but its R is 35 cents, so the same 70 cent move is only 2R.",
+  "costModel": "default",
+  "session": "2026-01-05",
+  "symbol": "AAA",
+  "dailyAtr": "1.50",
+  "openingRvol": 2.5,
+  "shares": 25,
+  "flattenMinute": 380,
+  "variants": [
+    {
+      "name": "published-10pct-atr",
+      "params": {},
+      "expect": {
+        "signal": {
+          "direction": "long",
+          "entry": "20.30",
+          "minute": 4
+        },
+        "stop": "20.15",
+        "target": null,
+        "breakevenAtR": null,
+        "outcome": {
+          "filled": true,
+          "entryMinute": 5,
+          "entryReference": "20.30",
+          "entryFill": "20.3306",
+          "exitMinute": 6,
+          "exitReason": "stop",
+          "exitReference": "20.15",
+          "exitFill": "20.1197",
+          "grossR": -10000,
+          "netR": -14060
+        }
+      }
+    },
+    {
+      "name": "range-low",
+      "params": {
+        "stop": {
+          "kind": "openingRange"
+        }
+      },
+      "expect": {
+        "signal": {
+          "direction": "long",
+          "entry": "20.30",
+          "minute": 4
+        },
+        "stop": "19.95",
+        "target": null,
+        "breakevenAtR": null,
+        "outcome": {
+          "filled": true,
+          "entryMinute": 5,
+          "entryReference": "20.30",
+          "entryFill": "20.3306",
+          "exitMinute": 380,
+          "exitReason": "eod",
+          "exitReference": "21.00",
+          "exitFill": "20.9795",
+          "grossR": 20000,
+          "netR": 18540
+        }
+      }
+    }
+  ]
+}

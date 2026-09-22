@@ -1,0 +1,72 @@
+{
+  "fixtureVersion": 1,
+  "setup": "orb@1.0.0",
+  "description": "The same bars under both exits. Price reaches +2R at 09:50 and then gives it all back. The published exit rides it down to a small loss at the flatten. The fixed 2R target, with its stop moved to breakeven at +1R, banks the win.",
+  "costModel": "default",
+  "session": "2026-01-05",
+  "symbol": "AAA",
+  "dailyAtr": "1.50",
+  "openingRvol": 2.5,
+  "shares": 25,
+  "flattenMinute": 380,
+  "variants": [
+    {
+      "name": "published-eod",
+      "params": {},
+      "expect": {
+        "signal": {
+          "direction": "long",
+          "entry": "20.30",
+          "minute": 4
+        },
+        "stop": "20.15",
+        "target": null,
+        "breakevenAtR": null,
+        "outcome": {
+          "filled": true,
+          "entryMinute": 5,
+          "entryReference": "20.30",
+          "entryFill": "20.3306",
+          "exitMinute": 380,
+          "exitReason": "eod",
+          "exitReference": "20.20",
+          "exitFill": "20.1799",
+          "grossR": -6667,
+          "netR": -10047
+        }
+      }
+    },
+    {
+      "name": "fixed-2r-breakeven-1r",
+      "params": {
+        "exit": {
+          "kind": "fixedR",
+          "targetR": 2,
+          "breakevenAtR": 1
+        }
+      },
+      "expect": {
+        "signal": {
+          "direction": "long",
+          "entry": "20.30",
+          "minute": 4
+        },
+        "stop": "20.15",
+        "target": "20.60",
+        "breakevenAtR": 10000,
+        "outcome": {
+          "filled": true,
+          "entryMinute": 5,
+          "entryReference": "20.30",
+          "entryFill": "20.3306",
+          "exitMinute": 20,
+          "exitReason": "target",
+          "exitReference": "20.60",
+          "exitFill": "20.5797",
+          "grossR": 20000,
+          "netR": 16606
+        }
+      }
+    }
+  ]
+}
