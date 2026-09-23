@@ -10,7 +10,8 @@
     "migrate:status": "tsx migrate.ts status",
     "migrate:create": "tsx migrate.ts create",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "bars": "tsx src/bars/cli.ts"
+    "bars": "tsx src/bars/cli.ts",
+    "replay:bench": "tsx src/replay/bench.ts"
   },
   "dependencies": {
     "@trader/adapters": "workspace:*",

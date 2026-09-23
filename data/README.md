@@ -84,3 +84,18 @@ What is stored, and why:
 Loads connect as the engine role. Compressing needs the table owner: `compress`, and the minute load,
 which compresses each month as it finishes so ten years never sit uncompressed on disk at once.
 Local dumps go under `data/dumps/` and `data/bars/`, both gitignored.
+
+## Replay
+
+A backtest reads the store through `TimescaleReplaySource` (`src/replay/timescale.ts`), the
+`ReplaySource` that `BacktestAdapter` in `@trader/adapters` replays from (F.2). It only reads, as the
+engine role, one short query at a time. A symbol counts as loaded for a month only with a complete
+minute checkpoint, so a backtest that reaches a month still loading stops instead of replaying silence.
+
+```bash
+pnpm --filter @trader/data replay:bench                       # 2017, the 20 busiest loaded symbols
+pnpm --filter @trader/data replay:bench --from 2017-06-01 --to 2017-06-30 --symbols MU,INTC
+```
+
+The bench replays twice with a stand-in engine and prints the time and a digest of every event. The two
+digests must match. One year of 20 symbols is about 2M bars and should replay in well under a minute.

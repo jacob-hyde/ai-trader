@@ -102,8 +102,10 @@ export interface DataAdapter extends EventSource<DataEvents> {
   subscriptions(): readonly string[];
 
   /**
-   * Closed bars in the range, oldest first, adjusted for splits and dividends. Pages internally, so one
-   * call returns the whole range. Throws RATE_LIMITED (retryable) when the source throttles.
+   * Closed bars in the range, oldest first, split-adjusted as of the current session so a lookback
+   * across a split is on one share basis. Not adjusted for dividends: the bar store has no dividend
+   * history, and a backtest and a live run must compute the same ATR. Pages internally, so one call
+   * returns the whole range. Throws RATE_LIMITED (retryable) when the source throttles.
    */
   getHistoricalBars(request: HistoricalBarsRequest): Promise<readonly SymbolBar[]>;
 
