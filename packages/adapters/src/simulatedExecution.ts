@@ -16,8 +16,13 @@
  * - On later bars the stop-loss fills at the stop or at the open if the bar gapped through it, and it
  *   is checked before the take-profit. A take-profit fills at its limit, never better.
  * - A flatten fills at the open of the next bar.
+ * - At the end of a session, every working order expires, since all of them are day orders, and a
+ *   position still open exits at the close of its symbol's last bar (endSession).
  * - The stop-loss pays the stop-exit allowance, everything else the market allowance, and the entry
  *   the stop-entry allowance when it was a stop.
+ *
+ * No bar, no fill. A halt reaches a bar feed as minutes with no bars, so nothing fills during one, and
+ * the first bar after it fills a level it gapped through at its open.
  *
  * Whole fills only. Partial fills belong to the paper and live adapters, where the broker decides.
  *
@@ -62,11 +67,18 @@ export interface SimulatedExecutionConfig {
   readonly start: { readonly session: SessionDate; readonly minuteOfSession: number };
 }
 
+/** What a close did: exits filled there, and entries that expired unfilled. */
+export interface SessionEnd {
+  readonly closed: readonly Order[];
+  readonly expired: readonly Order[];
+}
+
 interface Holding {
   readonly quantity: number;
   readonly averageEntryPrice: Fixed;
   readonly openedAt: IsoTimestamp;
-  lastPrice: Fixed;
+  /** The last bar of the symbol seen. Its close marks the position. */
+  lastBar: SymbolBar;
 }
 
 interface Bracket {
@@ -76,13 +88,16 @@ interface Bracket {
   takeProfitId: string | null;
   flattenId: string | null;
   holding: Holding | null;
-  done: boolean;
 }
 
 export class SimulatedExecution extends Emitter<ExecutionEvents> implements ExecutionAdapter {
   readonly #config: SimulatedExecutionConfig;
   readonly #orders = new Map<string, Order>();
+  /** Non-terminal orders, in the order they were placed. A long replay holds thousands of finished ones. */
+  readonly #open = new Map<string, Order>();
   readonly #brackets = new Map<string, Bracket>();
+  /** Brackets with a working order or an open position, oldest first. What a bar has to look at. */
+  readonly #active = new Map<string, Bracket>();
   #cash: Fixed;
   #now: { session: SessionDate; minuteOfSession: number };
   #fillSequence = 0;
@@ -161,11 +176,11 @@ export class SimulatedExecution extends Emitter<ExecutionEvents> implements Exec
       takeProfitId: takeProfit?.id ?? null,
       flattenId: null,
       holding: null,
-      done: false,
     };
     this.#brackets.set(order.clientOrderId, bracket);
+    this.#active.set(order.clientOrderId, bracket);
     for (const leg of [entry, stopLoss, ...(takeProfit === null ? [] : [takeProfit])]) {
-      this.#orders.set(leg.id, leg);
+      this.#store(leg);
       this.emit("orderUpdate", leg);
     }
     return Promise.resolve(this.#legsOf(bracket));
@@ -216,7 +231,7 @@ export class SimulatedExecution extends Emitter<ExecutionEvents> implements Exec
       updatedAt: this.now,
     };
     this.#update(order, { status: "replaced" });
-    this.#orders.set(replacement.id, replacement);
+    this.#store(replacement);
     const bracket = this.#brackets.get(order.clientOrderId) as Bracket;
     if (order.leg === "entry") {
       bracket.entryId = replacement.id;
@@ -231,10 +246,7 @@ export class SimulatedExecution extends Emitter<ExecutionEvents> implements Exec
 
   flattenAll(): Promise<readonly Order[]> {
     const flattens: Order[] = [];
-    for (const bracket of this.#brackets.values()) {
-      if (bracket.done) {
-        continue;
-      }
+    for (const bracket of [...this.#active.values()]) {
       if (bracket.holding === null) {
         this.#cancelBracket(bracket);
         continue;
@@ -242,43 +254,14 @@ export class SimulatedExecution extends Emitter<ExecutionEvents> implements Exec
       if (bracket.flattenId !== null) {
         continue;
       }
-      for (const id of [bracket.stopLossId, bracket.takeProfitId]) {
-        const leg = id === null ? undefined : this.#orders.get(id);
-        if (leg !== undefined && !TERMINAL_ORDER_STATUSES.includes(leg.status)) {
-          this.#update(leg, { status: "canceled" });
-        }
-      }
-      const flatten: Order = {
-        id: `${bracket.request.clientOrderId}/flatten`,
-        clientOrderId: bracket.request.clientOrderId,
-        leg: "flatten",
-        symbol: bracket.request.symbol,
-        side: bracket.request.side === "buy" ? "sell" : "buy",
-        type: "market",
-        quantity: bracket.holding.quantity,
-        filledQuantity: 0,
-        averageFillPrice: null,
-        limitPrice: null,
-        stopPrice: null,
-        status: "accepted",
-        replaces: null,
-        submittedAt: this.now,
-        updatedAt: this.now,
-      };
-      bracket.flattenId = flatten.id;
-      this.#orders.set(flatten.id, flatten);
-      this.emit("orderUpdate", flatten);
-      flattens.push(flatten);
+      flattens.push(this.#placeFlatten(bracket, bracket.holding));
     }
     return Promise.resolve(flattens);
   }
 
   getPositions(): Promise<readonly Position[]> {
     const positions: Position[] = [];
-    for (const bracket of this.#brackets.values()) {
-      if (bracket.done) {
-        continue;
-      }
+    for (const bracket of this.#active.values()) {
       const { request, holding } = bracket;
       const direction = request.side === "buy" ? "long" : "short";
       if (holding === null) {
@@ -302,7 +285,7 @@ export class SimulatedExecution extends Emitter<ExecutionEvents> implements Exec
       const stop = this.#orders.get(bracket.stopLossId) as Order;
       const takeProfit =
         bracket.takeProfitId === null ? null : (this.#orders.get(bracket.takeProfitId) as Order);
-      const perShare = sub(holding.lastPrice, holding.averageEntryPrice);
+      const perShare = sub(holding.lastBar.close, holding.averageEntryPrice);
       positions.push({
         symbol: request.symbol,
         direction,
@@ -315,27 +298,25 @@ export class SimulatedExecution extends Emitter<ExecutionEvents> implements Exec
         clientOrderId: request.clientOrderId,
         openedAt: holding.openedAt,
         unrealizedPnl: mulInt(perShare, sign * holding.quantity),
-        marketValue: mulInt(holding.lastPrice, sign * holding.quantity),
+        marketValue: mulInt(holding.lastBar.close, sign * holding.quantity),
       });
     }
     return Promise.resolve(positions);
   }
 
   getOpenOrders(): Promise<readonly Order[]> {
-    return Promise.resolve(
-      [...this.#orders.values()].filter((o) => !TERMINAL_ORDER_STATUSES.includes(o.status)),
-    );
+    return Promise.resolve([...this.#open.values()]);
   }
 
   getAccount(): Promise<Account> {
     let marked: Fixed = fixed(0);
     let committed: Fixed = fixed(0);
-    for (const bracket of this.#brackets.values()) {
-      if (bracket.done || bracket.holding === null) {
+    for (const bracket of this.#active.values()) {
+      if (bracket.holding === null) {
         continue;
       }
       const sign = bracket.request.side === "buy" ? 1 : -1;
-      const value = mulInt(bracket.holding.lastPrice, bracket.holding.quantity);
+      const value = mulInt(bracket.holding.lastBar.close, bracket.holding.quantity);
       marked = add(marked, sign === 1 ? value : neg(value));
       committed = add(committed, value);
     }
@@ -352,13 +333,18 @@ export class SimulatedExecution extends Emitter<ExecutionEvents> implements Exec
     });
   }
 
+  /** Symbols with a working order or an open position, sorted. A replay must keep feeding their bars. */
+  activeSymbols(): readonly string[] {
+    return [...new Set([...this.#active.values()].map((bracket) => bracket.request.symbol))].sort();
+  }
+
   /**
    * Advances the market by one closed bar. Fills whatever the bar reaches, oldest bracket first, then
    * marks the symbol's positions at the close. Call it before handing the bar to the engine.
    */
   onBar(bar: SymbolBar): void {
-    for (const bracket of this.#brackets.values()) {
-      if (bracket.done || bracket.request.symbol !== bar.symbol) {
+    for (const bracket of [...this.#active.values()]) {
+      if (bracket.request.symbol !== bar.symbol) {
         continue;
       }
       if (bracket.holding === null) {
@@ -367,14 +353,49 @@ export class SimulatedExecution extends Emitter<ExecutionEvents> implements Exec
         this.#tryExit(bracket, bar);
       }
       if (bracket.holding !== null) {
-        bracket.holding.lastPrice = bar.close;
+        bracket.holding.lastBar = bar;
       }
     }
     this.#now = { session: bar.session, minuteOfSession: bar.minuteOfSession };
   }
 
+  /**
+   * Ends the session at its close, the instant `close` names.
+   *
+   * Every order here is a day order, so an entry still working expires with its held exits, as at the
+   * broker. A position still open exits at the close of the last bar its symbol printed, at the market
+   * allowance: the trade simulator's rule for bars that run out. That covers a flatten sent too late for
+   * another bar, and an engine that never sent one.
+   *
+   * A day-trading run should end every session flat on its own, so anything in `closed` is the engine
+   * missing its flatten, and the backtest reports it.
+   *
+   * A symbol halted into the close exits at its last print before the halt. The real position would be
+   * stuck until the reopen, so this is the one place the broker is kinder than the market.
+   */
+  endSession(close: { readonly session: SessionDate; readonly minuteOfSession: number }): SessionEnd {
+    this.#now = { session: close.session, minuteOfSession: close.minuteOfSession };
+    const closed: Order[] = [];
+    const expired: Order[] = [];
+    for (const bracket of [...this.#active.values()]) {
+      const holding = bracket.holding;
+      if (holding === null) {
+        this.#cancelBracket(bracket, "expired");
+        expired.push(this.#orders.get(bracket.entryId) as Order);
+        continue;
+      }
+      const flatten =
+        bracket.flattenId === null
+          ? this.#placeFlatten(bracket, holding)
+          : (this.#orders.get(bracket.flattenId) as Order);
+      this.#exit(bracket, flatten, holding.lastBar.close, "market", this.#at(holding.lastBar));
+      closed.push(this.#orders.get(flatten.id) as Order);
+    }
+    return { closed, expired };
+  }
+
   #tryEntry(bracket: Bracket, bar: SymbolBar): void {
-    // A bracket that is not done and holds nothing has a working entry: cancel and replace keep it so.
+    // An active bracket that holds nothing has a working entry: cancel and replace keep it so.
     const entry = this.#orders.get(bracket.entryId) as Order;
     const long = entry.side === "buy";
     let reference: Fixed | null = null;
@@ -396,12 +417,13 @@ export class SimulatedExecution extends Emitter<ExecutionEvents> implements Exec
     if (reference === null) {
       return;
     }
-    const price = this.#fill(entry, reference, kind, bar);
+    const at = this.#at(bar);
+    const price = this.#fill(entry, reference, kind, at);
     bracket.holding = {
       quantity: entry.quantity,
       averageEntryPrice: price,
-      openedAt: this.#at(bar),
-      lastPrice: bar.close,
+      openedAt: at,
+      lastBar: bar,
     };
     for (const id of [bracket.stopLossId, bracket.takeProfitId]) {
       if (id !== null) {
@@ -412,7 +434,7 @@ export class SimulatedExecution extends Emitter<ExecutionEvents> implements Exec
     const stop = this.#orders.get(bracket.stopLossId) as Order;
     const stopPrice = stop.stopPrice as Fixed;
     if (long ? bar.low <= stopPrice : bar.high >= stopPrice) {
-      this.#exit(bracket, stop, stopPrice, "stopExit", bar);
+      this.#exit(bracket, stop, stopPrice, "stopExit", at);
       return;
     }
     this.#tryTakeProfit(bracket, bar);
@@ -420,7 +442,7 @@ export class SimulatedExecution extends Emitter<ExecutionEvents> implements Exec
 
   #tryExit(bracket: Bracket, bar: SymbolBar): void {
     if (bracket.flattenId !== null) {
-      this.#exit(bracket, this.#orders.get(bracket.flattenId) as Order, bar.open, "market", bar);
+      this.#exit(bracket, this.#orders.get(bracket.flattenId) as Order, bar.open, "market", this.#at(bar));
       return;
     }
     const long = bracket.request.side === "buy";
@@ -429,7 +451,7 @@ export class SimulatedExecution extends Emitter<ExecutionEvents> implements Exec
       const stopPrice = stop.stopPrice as Fixed;
       if (long ? bar.low <= stopPrice : bar.high >= stopPrice) {
         const reference = long ? min(stopPrice, bar.open) : max(stopPrice, bar.open);
-        this.#exit(bracket, stop, reference, "stopExit", bar);
+        this.#exit(bracket, stop, reference, "stopExit", this.#at(bar));
         return;
       }
     }
@@ -447,12 +469,43 @@ export class SimulatedExecution extends Emitter<ExecutionEvents> implements Exec
     const long = bracket.request.side === "buy";
     const limit = takeProfit.limitPrice as Fixed;
     if (long ? bar.high >= limit : bar.low <= limit) {
-      this.#exit(bracket, takeProfit, limit, "market", bar);
+      this.#exit(bracket, takeProfit, limit, "market", this.#at(bar));
     }
   }
 
-  #exit(bracket: Bracket, order: Order, reference: Fixed, kind: FillKind, bar: SymbolBar): void {
-    this.#fill(order, reference, kind, bar);
+  /** Cancels the position's exits and places a market order for the whole of it. */
+  #placeFlatten(bracket: Bracket, holding: Holding): Order {
+    for (const id of [bracket.stopLossId, bracket.takeProfitId]) {
+      const leg = id === null ? undefined : this.#orders.get(id);
+      if (leg !== undefined && !TERMINAL_ORDER_STATUSES.includes(leg.status)) {
+        this.#update(leg, { status: "canceled" });
+      }
+    }
+    const flatten: Order = {
+      id: `${bracket.request.clientOrderId}/flatten`,
+      clientOrderId: bracket.request.clientOrderId,
+      leg: "flatten",
+      symbol: bracket.request.symbol,
+      side: bracket.request.side === "buy" ? "sell" : "buy",
+      type: "market",
+      quantity: holding.quantity,
+      filledQuantity: 0,
+      averageFillPrice: null,
+      limitPrice: null,
+      stopPrice: null,
+      status: "accepted",
+      replaces: null,
+      submittedAt: this.now,
+      updatedAt: this.now,
+    };
+    bracket.flattenId = flatten.id;
+    this.#store(flatten);
+    this.emit("orderUpdate", flatten);
+    return flatten;
+  }
+
+  #exit(bracket: Bracket, order: Order, reference: Fixed, kind: FillKind, at: IsoTimestamp): void {
+    this.#fill(order, reference, kind, at);
     for (const id of [bracket.stopLossId, bracket.takeProfitId, bracket.flattenId]) {
       const leg = id === null ? undefined : this.#orders.get(id);
       if (leg !== undefined && leg.id !== order.id && !TERMINAL_ORDER_STATUSES.includes(leg.status)) {
@@ -460,11 +513,11 @@ export class SimulatedExecution extends Emitter<ExecutionEvents> implements Exec
       }
     }
     bracket.holding = null;
-    bracket.done = true;
+    this.#finish(bracket);
   }
 
   /** Prices one whole fill with the cost model, books the cash, and emits the update and the fill. */
-  #fill(order: Order, reference: Fixed, kind: FillKind, bar: SymbolBar): Fixed {
+  #fill(order: Order, reference: Fixed, kind: FillKind, at: IsoTimestamp): Fixed {
     const modeled = modelFill(
       {
         side: order.side,
@@ -474,7 +527,6 @@ export class SimulatedExecution extends Emitter<ExecutionEvents> implements Exec
       },
       this.#config.costModel,
     );
-    const at = this.#at(bar);
     const notional = mulInt(modeled.price, order.quantity);
     this.#cash =
       order.side === "buy"
@@ -502,14 +554,18 @@ export class SimulatedExecution extends Emitter<ExecutionEvents> implements Exec
     return modeled.price;
   }
 
-  #cancelBracket(bracket: Bracket): void {
+  #cancelBracket(bracket: Bracket, status: "canceled" | "expired" = "canceled"): void {
     for (const id of [bracket.entryId, bracket.stopLossId, bracket.takeProfitId]) {
       const leg = id === null ? undefined : this.#orders.get(id);
       if (leg !== undefined && !TERMINAL_ORDER_STATUSES.includes(leg.status)) {
-        this.#update(leg, { status: "canceled" });
+        this.#update(leg, { status });
       }
     }
-    bracket.done = true;
+    this.#finish(bracket);
+  }
+
+  #finish(bracket: Bracket): void {
+    this.#active.delete(bracket.request.clientOrderId);
   }
 
   #legsOf(bracket: Bracket): readonly Order[] {
@@ -521,9 +577,19 @@ export class SimulatedExecution extends Emitter<ExecutionEvents> implements Exec
 
   #update(order: Order, changes: Partial<Order>): Order {
     const updated: Order = { ...order, ...changes, updatedAt: changes.updatedAt ?? this.now };
-    this.#orders.set(order.id, updated);
+    this.#store(updated);
     this.emit("orderUpdate", updated);
     return updated;
+  }
+
+  /** Records an order's latest state, and keeps the open set in step with it. */
+  #store(order: Order): void {
+    this.#orders.set(order.id, order);
+    if (TERMINAL_ORDER_STATUSES.includes(order.status)) {
+      this.#open.delete(order.id);
+    } else {
+      this.#open.set(order.id, order);
+    }
   }
 
   #at(bar: SymbolBar): IsoTimestamp {

@@ -280,6 +280,8 @@ describe("SimulatedExecution orders", () => {
     expect(await b.getPositions()).toMatchObject([
       { state: "pendingEntry", quantity: 0, averageEntryPrice: 203_000 },
     ]);
+    // A working entry holds nothing, so it marks nothing and commits no buying power yet.
+    expect(await b.getAccount()).toMatchObject({ equity: CASH, cash: CASH, buyingPower: CASH });
   });
 
   it("is idempotent on clientOrderId", async () => {
@@ -492,6 +494,85 @@ describe("SimulatedExecution orders", () => {
     b.onBar(bar(6, 203_000, 211_000, 198_000, 205_000));
     expect(fills).toEqual([]);
     expect((await b.getPositions())[0]?.state).toBe("open");
+  });
+
+  it("ends a session: a working entry expires with its exits, an open position exits at its last close", async () => {
+    const b = broker();
+    await b.submitBracket(bracket);
+    await b.submitBracket({
+      ...bracket,
+      clientOrderId: "never",
+      entry: { type: "stop", stopPrice: fixed(250_000) },
+    });
+    await b.submitBracket({
+      ...bracket,
+      clientOrderId: "other",
+      symbol: "OTH",
+      entry: { type: "market" },
+      stopLoss: { stopPrice: fixed(40_000) },
+      takeProfit: { limitPrice: fixed(60_000) },
+    });
+    expect(b.activeSymbols()).toEqual(["OTH", "SYN"]);
+    b.onBar(bar(5, 202_500, 203_500, 202_400, 203_300));
+    b.onBar({ ...bar(5, 50_000, 50_500, 49_900, 50_200), symbol: "OTH" });
+    b.onBar(bar(6, 203_300, 204_000, 203_100, 203_900));
+    const updates: Order[] = [];
+    const fills: Fill[] = [];
+    b.on("orderUpdate", (o) => updates.push(o));
+    b.on("fill", (f) => fills.push(f));
+    const end = b.endSession({ session: SESSION, minuteOfSession: 390 });
+    // Each exits at the close of the last bar its own symbol printed, at the market allowance.
+    expect(fills.map((f) => [f.clientOrderId, f.side, f.price, f.at])).toEqual([
+      [bracket.clientOrderId, "sell", 203_698, labelClock(SESSION, 6)],
+      ["other", "sell", 50_050, labelClock(SESSION, 5)],
+    ]);
+    expect(end.closed.map((o) => [o.clientOrderId, o.leg, o.status])).toEqual([
+      [bracket.clientOrderId, "flatten", "filled"],
+      ["other", "flatten", "filled"],
+    ]);
+    expect(end.expired.map((o) => [o.clientOrderId, o.leg, o.status])).toEqual([
+      ["never", "entry", "expired"],
+    ]);
+    expect(updates.filter((o) => o.clientOrderId === "never").map((o) => [o.leg, o.status])).toEqual([
+      ["entry", "expired"],
+      ["stopLoss", "expired"],
+      ["takeProfit", "expired"],
+    ]);
+    expect(await b.getOpenOrders()).toEqual([]);
+    expect(await b.getPositions()).toEqual([]);
+    expect(b.activeSymbols()).toEqual([]);
+    expect(b.now).toBe(labelClock(SESSION, 390));
+    expect(b.endSession({ session: SESSION, minuteOfSession: 390 })).toEqual({ closed: [], expired: [] });
+  });
+
+  it("fills a flatten still waiting for a bar at the close, the same as a flatten the close forced", async () => {
+    const waiting = broker();
+    const forced = broker();
+    for (const b of [waiting, forced]) {
+      await b.submitBracket(bracket);
+      b.onBar(bar(5, 202_500, 203_500, 202_400, 203_300));
+    }
+    const [flatten] = await waiting.flattenAll();
+    const fromWaiting = waiting.endSession({ session: SESSION, minuteOfSession: 390 });
+    const fromForced = forced.endSession({ session: SESSION, minuteOfSession: 390 });
+    expect(fromWaiting.closed.map((o) => o.id)).toEqual([(flatten as Order).id]);
+    expect(fromWaiting.closed[0]?.averageFillPrice).toBe(fromForced.closed[0]?.averageFillPrice);
+    expect((await waiting.getAccount()).cash).toBe((await forced.getAccount()).cash);
+  });
+
+  it("never lets an order placed while a bar is being handed out fill on that bar", async () => {
+    const b = broker();
+    b.on("fill", (f) => {
+      if (f.clientOrderId === bracket.clientOrderId && f.side === "buy") {
+        void b.submitBracket({ ...bracket, clientOrderId: "reentry", entry: { type: "market" } });
+      }
+    });
+    await b.submitBracket(bracket);
+    b.onBar(bar(5, 202_500, 203_500, 202_400, 203_300));
+    expect((await b.getPositions()).map((p) => [p.clientOrderId, p.state])).toEqual([
+      [bracket.clientOrderId, "open"],
+      ["reentry", "pendingEntry"],
+    ]);
   });
 
   it("holds and marks a short, pending and open, and fills a short limit entry", async () => {
