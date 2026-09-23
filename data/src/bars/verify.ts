@@ -103,12 +103,16 @@ export async function verify(
   }
 
   // Counted from the bars themselves, not from the checkpoints, so rows lost after a load show up.
+  // Distinct symbol-sessions first, then per month: a count(DISTINCT) grouped by month sorts every
+  // row, and over the full store that ran for hours where this takes a minute or two.
   const minute = await pool.query<{ symbol: string; month: string; traded: number; present: number }>(
-    `WITH m AS (
-       SELECT symbol, date_trunc('month', session)::date AS month, count(DISTINCT session)::int AS present
-       FROM bars_1m
+    `WITH s AS (
+       SELECT symbol, session FROM bars_1m
        WHERE ts >= date_trunc('month', $1::date) AND ts < $2::date + 1 AND ($3::text[] IS NULL OR symbol = ANY($3))
-       GROUP BY 1, 2
+       GROUP BY symbol, session
+     ), m AS (
+       SELECT symbol, date_trunc('month', session)::date AS month, count(*)::int AS present
+       FROM s GROUP BY 1, 2
      ), d AS (
        SELECT symbol, date_trunc('month', session)::date AS month, count(*)::int AS traded
        FROM bars_1d
