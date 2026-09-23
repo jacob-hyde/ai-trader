@@ -11,7 +11,7 @@ import { runner } from "node-pg-migrate";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BarLoader, type Unit } from "../src/bars/loader.js";
-import { compressNow } from "../src/bars/maintenance.js";
+import { analyzeNow, compressNow } from "../src/bars/maintenance.js";
 import { type BarSource, type BarsQuery, InvalidSymbolError } from "../src/bars/source.js";
 import { BarStore } from "../src/bars/store.js";
 import { fromAssets } from "../src/bars/symbols.js";
@@ -334,6 +334,23 @@ describe.skipIf(!ownerUrl || !engineUrl)("H.7 bar store", () => {
     await owner.query("DELETE FROM bars_1m WHERE symbol = $1 AND session = '2021-02-03'", [LIVE]);
     const holed = await verify(pool, "2021-01-01", "2021-02-28", [LIVE]);
     expect(holed.minuteGaps.map((gap) => [gap.symbol, gap.missing])).toEqual([[LIVE, ["2021-02-03"]]]);
+  });
+
+  it("refreshes the planner's statistics on the load's tables", async () => {
+    const before = new Date();
+    expect(await analyzeNow(owner)).toEqual(["bar_load_checkpoints", "symbols", "market_sessions"]);
+    const analyzed = await owner.query<{ relname: string; last_analyze: Date | null }>(
+      `SELECT relname, last_analyze FROM pg_stat_user_tables
+       WHERE relname IN ('bar_load_checkpoints', 'symbols', 'market_sessions') ORDER BY relname`,
+    );
+    expect(analyzed.rows.map((row) => row.relname)).toEqual([
+      "bar_load_checkpoints",
+      "market_sessions",
+      "symbols",
+    ]);
+    for (const row of analyzed.rows) {
+      expect(row.last_analyze?.getTime() ?? 0).toBeGreaterThanOrEqual(before.getTime() - 1_000);
+    }
   });
 
   it(

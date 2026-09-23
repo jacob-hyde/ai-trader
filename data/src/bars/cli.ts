@@ -9,13 +9,15 @@
  *   pnpm bars minute --symbols A,B     or for named symbols, every month in the range
  *   pnpm bars verify                   coverage against the calendar, gaps listed
  *   pnpm bars compress                 compress now rather than waiting for the policy (table owner)
+ *   pnpm bars analyze                  refresh the planner's statistics on the load's tables (table owner)
  *   pnpm bars status                   sizes, checkpoints, and timed backtest reads
  *   pnpm bars all                      calendar, symbols, daily, minute --universe, verify, compress
  *
  * Every load resumes: run it again and it fetches only the symbol-months without a complete checkpoint.
  * --from and --to take a month or a date (default 2016-01 through today). Loads connect as the engine
- * role (DATABASE_URL). Compressing needs the table owner (MIGRATION_DATABASE_URL): the compress command,
- * and the minute load, which compresses each month as it finishes.
+ * role (DATABASE_URL). The table owner (MIGRATION_DATABASE_URL) is needed to compress, by the compress
+ * command and by the minute load as each month finishes, and to analyze, which every load does when it
+ * ends. Without the owner both are left to the background jobs.
  */
 
 import { readFileSync } from "node:fs";
@@ -25,7 +27,13 @@ import { AlpacaClient, type Logger } from "@trader/adapters/alpaca";
 import { config as loadDotenv } from "dotenv";
 import pg from "pg";
 import { BarLoader, type Unit, type UnitGrid } from "./loader.js";
-import { checkpointSummary, compressNow, compressionStats, timeBacktestReads } from "./maintenance.js";
+import {
+  analyzeNow,
+  checkpointSummary,
+  compressNow,
+  compressionStats,
+  timeBacktestReads,
+} from "./maintenance.js";
 import { alpacaSource } from "./source.js";
 import { BarStore } from "./store.js";
 import { fromAssets, fromCorporateActions, fromFile } from "./symbols.js";
@@ -257,6 +265,21 @@ async function report(): Promise<void> {
   }
 }
 
+/** Refreshes the planner's statistics after a load, when the owner is available. See analyzeNow. */
+async function analyze(): Promise<void> {
+  const ownerUrl = process.env["MIGRATION_DATABASE_URL"];
+  if (ownerUrl === undefined || ownerUrl === "") {
+    log("analyze: MIGRATION_DATABASE_URL is not set, so statistics are left to autovacuum");
+    return;
+  }
+  const owner = new pg.Pool({ connectionString: ownerUrl, max: 1 });
+  try {
+    log(`analyze: ${(await analyzeNow(owner)).join(", ")}`);
+  } finally {
+    await owner.end();
+  }
+}
+
 async function compress(): Promise<void> {
   const owner = new pg.Pool({ connectionString: env("MIGRATION_DATABASE_URL"), max: 1 });
   try {
@@ -289,12 +312,15 @@ try {
   switch (command) {
     case "calendar":
       await calendar();
+      await analyze();
       break;
     case "symbols":
       await symbols();
+      await analyze();
       break;
     case "daily":
       ok = await daily();
+      await analyze();
       break;
     case "universe":
       await universe();
@@ -307,12 +333,16 @@ try {
       } else {
         throw new Error("minute needs --universe or --symbols");
       }
+      await analyze();
       break;
     case "verify":
       await report();
       break;
     case "compress":
       await compress();
+      break;
+    case "analyze":
+      await analyze();
       break;
     case "status":
       await status();
@@ -322,6 +352,8 @@ try {
       await symbols();
       ok = (await daily()) && ok;
       ok = (await minute(await universe())) && ok;
+      // Before verify, which plans its queries on these statistics.
+      await analyze();
       await report();
       await compress();
       await status();
