@@ -267,11 +267,12 @@ Re-promotion after any demotion or HALT needs a logged, 2FA-gated review, not ju
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "registered": "2026-09-22",
   "samples": {
     "inSample": { "from": "2016-01-04", "to": "2023-12-29", "firstTradable": "2016-01-25" },
-    "holdout": { "from": "2024-01-02", "to": "2026-08-31" }
+    "holdout": { "from": "2024-01-02", "to": "2026-08-31" },
+    "excludedSessions": ["2022-03-08"]
   },
   "strategy": {
     "setup": "orb",
@@ -348,6 +349,24 @@ own commit, with the reason. After any L.2 result exists, a change cannot alter 
 start a new, separately registered study. Data fixes that are not informed by results (loading a
 missing month, adding a delisted ticker, building the ETF list) are allowed before the first run and
 are recorded here.
+
+### Amendment 1 (2026-09-23): 2022-03-08 is not a session
+
+2022-03-08 is removed from the calendar for this study. No signal is taken that day, and every lookback
+(prior close, average volume, ATR, the lookback-window rule, and the opening-RVOL baseline) skips it as
+if the exchange had been closed. It applies to every symbol, not only the affected ones, so the rule
+needs no judgment about which names were hit.
+
+Why: Alpaca's SIP history has no regular-hours bars that day for about 111 symbols, many of them large
+NYSE listings (BAC, KO, PFE, RTX, CVS, MET, VALE, EPD). For BAC it returns 125 minute bars, every one
+before the open or after the close, and a daily bar of 6.3M shares, which is that extended-hours volume
+alone against a usual 40M to 60M. 1,453 other symbols have normal bars that day. Traded, the day's
+in-play ranking would be picked from a market missing those names. Kept in the lookbacks, their ATR and
+opening-volume baselines would carry a day that did not happen as recorded. Re-fetching cannot fix it:
+the store matches what Alpaca serves today.
+
+Found by the coverage check after the minute load finished, before any L.2 run, and not informed by any
+result. Section 11 carries it as `samples.excludedSessions`, and its version is now 2.
 
 ## 13. Known limitations
 
