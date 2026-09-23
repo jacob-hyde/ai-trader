@@ -313,8 +313,9 @@ shadow; J.8 later), backtest UI polish (L.4), M.3.
 - [ ] Risk-config schema (tunable params + bounds)
 - [ ] Archiver table schemas (`fundamentals_snapshots`, `news_events`, `screener_snapshots`)
 - [ ] ORB Stage-3/Stage-4 spec as pure-function signatures
-- [ ] Pre-registration document (hypotheses, scorecard thresholds, project-level stopping rule), dated
-  before any backtest result
+- [x] Pre-registration document (hypotheses, scorecard thresholds, project-level stopping rule), dated
+  before any backtest result: `Docs/Pre-Registration.md`, which also fixes the scorecard, ladder, and
+  kill-rule numbers
 
 ---
 
