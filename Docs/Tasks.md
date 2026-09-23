@@ -486,6 +486,7 @@ the cost model. Neither alone is the proof.
 ### L.0 — Pre-registration (before any results)
 - **Description:** A dated document stating the hypotheses, the scorecard thresholds (O.1), and a **project-level stopping rule** including the negative outcome (e.g. edge not stable year-over-year, or live slippage > X → stop). Must be committed before L.2 produces a number.
 - **Acceptance:** Document exists in Docs/ with a date preceding the first backtest run; thresholds are numeric and computable.
+- **Done:** `Docs/Pre-Registration.md` (2026-09-22). It supersedes the L.2 and O.1 wording that came before it.
 - **Depends on:** —  **Labels:** validation, docs  **Estimate:** 2  **Priority:** P0
 
 ### L.1 — Backtest job runner
@@ -493,10 +494,10 @@ the cost model. Neither alone is the proof.
 - **Acceptance:** A submitted config runs to completion with progress; results persisted.
 - **Depends on:** F.2  **Labels:** backtest, engine  **Estimate:** 5  **Priority:** P2
 
-### L.2 — ORB A/B backtest
-- **Description:** Run the exit A/B (EOD-flatten vs 1.5–2R+BE@1R) **and a stop-width A/B** (10% ATR per the paper vs wider, e.g. 5-min low / ~50% ATR) over real bars with the cost model; compare. At 1× with a binding notional cap a wider stop raises R$ and improves cost/R, so test whether the edge survives it.
-- **Acceptance:** Produces comparable metrics for both variants on the same data/seed.
-- **Depends on:** L.1, C.6, C.8  **Labels:** backtest, validation  **Estimate:** 3  **Priority:** P2
+### L.2 — ORB backtest (pre-registered)
+- **Description:** Run the test exactly as `Docs/Pre-Registration.md` fixes it. Confirmatory: the **range-low stop** with two exits, EOD flatten and a 2R target with breakeven at 1R, top-20 opening RVOL, ETFs/ETNs excluded, long only, cost model and cost-to-risk gate on. In-sample 2016 to 2023 decides the verdict; the 2024-01 to 2026-08 holdout runs once on the frozen configuration. The published 10% ATR stop is **not** a confirmatory arm (on real 2017 data it passed the 0.15R gate on 1 signal in 873); it runs gate-off as a diagnostic next to the 50% ATR stop.
+- **Acceptance:** Both exits on identical data/seed; verdict per gate computed from the pre-registration's thresholds; year-by-year table, RVOL-bucket table, and every section 7 diagnostic persisted with the run; preconditions checked (complete data, H.8 filter, ETF list committed, null model passing on the same commit); holdout sessions refused until the frozen configuration is committed.
+- **Depends on:** L.0, L.1, C.6, C.8, L.6, H.8  **Labels:** backtest, validation  **Estimate:** 3  **Priority:** P2
 
 ### L.3 — Null-model run + report
 - **Description:** Surface D.4 as a first-class, repeatable report.
@@ -569,8 +570,8 @@ the cost model. Neither alone is the proof.
 **Goal:** define "proven" with statistical power, then scale fast with an auto-kill safety net.
 
 ### O.1 — Validation scorecard
-- **Description:** Concrete acceptance metrics under the decomposed proof: (a) backtest edge established with large n (thousands of trades) and **year-over-year stability**; (b) live slippage ≈ modeled over a minimum fill count; (c) live results not inconsistent with the backtest distribution; plus max-DD limit and null-model pass. Explicitly NOT "live expectancy statistically > 0" (unreachable for a thin edge: ~3,500 trades).
-- **Acceptance:** A documented, computable scorecard; current status renders from live data.
+- **Description:** Concrete acceptance metrics under the decomposed proof: (a) backtest edge established with large n (thousands of trades) and **year-over-year stability**; (b) live slippage ≈ modeled over a minimum fill count; (c) live results not inconsistent with the backtest distribution; plus max-DD limit and null-model pass. Explicitly NOT "live expectancy statistically > 0" (unreachable for a thin edge: ~3,500 trades). Every threshold is read from `Docs/Pre-Registration.md` section 11; RVOL-bucket ordering is reported there, not gated.
+- **Acceptance:** A documented, computable scorecard whose thresholds a test holds to the pre-registration; current status renders from live data; a threshold changes only through a dated amendment.
 - **Depends on:** N.2, N.3  **Labels:** validation  **Estimate:** 5  **Priority:** P0
 
 ### O.2 — Promotion ladder
@@ -605,4 +606,4 @@ K.3/K.4/K.6/K.7 (+ minimal K.5), M.1/M.2, N. **Deferred past live-small:** K.8/K
 shadow; J.8 later), L.4, M.3.
 
 **Path to the first real answer (the backtest result, before any capital is committed):** A → C → D → E.4 →
-F.1/F.2 → H.7 → L.0 → L.1 → L.2 + L.6 → L.3. Everything else only matters if that number is positive and stable.
+F.1/F.2 → H.7 → L.0 → L.1 + H.8 → L.2 + L.6 → L.3. Everything else only matters if that number is positive and stable.
