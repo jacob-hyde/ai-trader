@@ -55,6 +55,7 @@ pnpm bars universe                 # which symbol-months pass the liquidity scre
 pnpm bars minute --universe        # minute bars for those symbol-months
 pnpm bars verify                   # coverage against the calendar, gaps listed as runs
 pnpm bars compress                 # compress now instead of waiting for the policy (table owner)
+pnpm bars analyze                  # refresh planner statistics on the load's tables (table owner)
 pnpm bars status                   # sizes, checkpoints, and timed backtest reads
 pnpm bars all                      # all of the above, in order
 ```
@@ -82,7 +83,10 @@ What is stored, and why:
   on the bars before it, plus the month before for the RVOL lookback. Everything gets daily bars.
 
 Loads connect as the engine role. Compressing needs the table owner: `compress`, and the minute load,
-which compresses each month as it finishes so ten years never sit uncompressed on disk at once.
+which compresses each month as it finishes so ten years never sit uncompressed on disk at once. Every
+load also ends by analyzing its bookkeeping tables as the owner. Autovacuum waits for 10% of a table to
+change, and after the full minute load the checkpoint table's stale statistics sent verify into a
+nested loop that ran for hours.
 Local dumps go under `data/dumps/` and `data/bars/`, both gitignored.
 
 ## Replay

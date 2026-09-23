@@ -1,5 +1,5 @@
 /**
- * Compression and a health readout for the bar store.
+ * Compression, planner statistics, and a health readout for the bar store.
  *
  * The compression policy on both hypertables compresses chunks once they are 30 days old, but its job
  * runs every 12 hours, so a bulk load sits uncompressed until then. compressNow does the same work at
@@ -18,6 +18,27 @@ export interface CompressionStats {
 }
 
 const TABLES = ["bars_1d", "bars_1m"] as const;
+
+/** The load's bookkeeping tables. Small, so analyzing all three takes about a second. */
+const LOAD_TABLES = ["bar_load_checkpoints", "symbols", "market_sessions"] as const;
+
+/**
+ * Refreshes the planner's statistics on the load's bookkeeping tables. Owner only.
+ *
+ * Autovacuum re-analyzes a table only once 10% of it has changed, and a load can change what a table
+ * holds without crossing that line. After the full minute load, bar_load_checkpoints still had the
+ * statistics from before it, when it held almost no minute checkpoints, so the planner expected one row
+ * where there were 166,000 and verify ran for hours on a nested loop.
+ *
+ * The bar hypertables are left to autovacuum: each chunk is its own table, so a load crosses the
+ * threshold chunk by chunk.
+ */
+export async function analyzeNow(owner: pg.Pool): Promise<readonly string[]> {
+  for (const table of LOAD_TABLES) {
+    await owner.query(`ANALYZE ${table}`);
+  }
+  return LOAD_TABLES;
+}
 
 export interface CompressWindow {
   /** Only these hypertables. Default both. */
