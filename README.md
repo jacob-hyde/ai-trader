@@ -48,6 +48,7 @@ pnpm backtest worker                            # takes queued runs until stoppe
 pnpm backtest submit run.json                   # queues a run and follows its progress to the end
 pnpm backtest run run.json                      # the same run here, without Redis
 pnpm backtest status [<run id>]
+pnpm backtest report <run id>                   # a run's metrics (L.4), kept with it; run and submit keep them too
 pnpm backtest diff <run id> <run id>            # what differs: commit, data snapshot, configuration, results
 pnpm backtest null-model                        # the null-model tripwire on this checkout, kept against the commit
 ```

@@ -102,9 +102,9 @@ describe.skipIf(!ownerUrl || !engineUrl)("A.4 migrations and TimescaleDB", () =>
       };
       expect(await present()).toEqual([true, true, true, true]);
 
-      // 0008 run snapshots, 0007 null-model runs, 0006 bad ticks, 0005 backtest runs, 0004 bar store,
-      // 0003 hypertable helper.
-      await runner({ ...scratchBase, direction: "down", count: 6 });
+      // 0009 reports, 0008 run snapshots, 0007 null-model runs, 0006 bad ticks, 0005 backtest runs,
+      // 0004 bar store, 0003 hypertable helper.
+      await runner({ ...scratchBase, direction: "down", count: 7 });
       expect(await present()).toEqual([false, false, false, false]);
 
       await runner({ ...scratchBase, direction: "up", count: Number.POSITIVE_INFINITY });

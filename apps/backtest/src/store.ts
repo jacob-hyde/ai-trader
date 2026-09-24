@@ -10,10 +10,12 @@
  * never half of one.
  */
 
+import type { Fixed, Ratio } from "@trader/contracts";
 import type pg from "pg";
 import { type RunConfig, parseRunConfig } from "./config.js";
 import type { GitState } from "./guard.js";
 import type { Registration } from "./registration.js";
+import type { EntryOutcome, ExitReason, TradeRecord } from "./records.js";
 import type { RunProgress, RunSummary, SessionResult } from "./run.js";
 import type { DataSnapshot } from "./universe.js";
 
@@ -44,6 +46,88 @@ export interface RunRow {
   readonly createdAt: Date;
   readonly startedAt: Date | null;
   readonly finishedAt: Date | null;
+}
+
+/** A report on a run, as kept (migration 0009). */
+export interface ReportRow<T = unknown> {
+  readonly runId: string;
+  readonly kind: string;
+  readonly content: T;
+  readonly text: string;
+  readonly gitCommit: string | null;
+  readonly gitDirty: boolean;
+  readonly createdAt: Date;
+}
+
+const TRADE_COLUMNS = [
+  "variant",
+  "symbol",
+  "session",
+  "direction",
+  "rank",
+  "opening_rvol",
+  "daily_atr",
+  "prior_close",
+  "signal_minute",
+  "entry",
+  "stop",
+  "target",
+  "cost_per_share",
+  "cost_to_risk",
+  "gate_passed",
+  "refusal",
+  "shares",
+  "entry_outcome",
+  "entry_minute",
+  "entry_reference",
+  "entry_fill",
+  "exit_minute",
+  "exit_reason",
+  "exit_reference",
+  "exit_fill",
+  "gross_pnl",
+  "net_pnl",
+  "gross_r",
+  "net_r",
+] as const;
+
+type TradeColumn = (typeof TRADE_COLUMNS)[number];
+
+/** Postgres hands bigint back as text. Every stored number is a whole number of units. */
+const num = (value: unknown): number | null => (value === null ? null : Number(value));
+
+function tradeFromRow(row: Record<TradeColumn, unknown>): TradeRecord {
+  return {
+    variant: row.variant as string,
+    symbol: row.symbol as string,
+    session: row.session as string,
+    direction: row.direction as TradeRecord["direction"],
+    rank: row.rank as number,
+    openingRvol: row.opening_rvol as Ratio,
+    dailyAtr: num(row.daily_atr) as Fixed,
+    priorClose: num(row.prior_close) as Fixed,
+    signalMinute: row.signal_minute as number,
+    entry: num(row.entry) as Fixed,
+    stop: num(row.stop) as Fixed | null,
+    target: num(row.target) as Fixed | null,
+    costPerShare: num(row.cost_per_share) as Fixed | null,
+    costToRisk: row.cost_to_risk as Ratio | null,
+    gatePassed: row.gate_passed as boolean,
+    refusal: row.refusal as string | null,
+    shares: row.shares as number,
+    entryOutcome: row.entry_outcome as EntryOutcome,
+    entryMinute: row.entry_minute as number | null,
+    entryReference: num(row.entry_reference) as Fixed | null,
+    entryFill: num(row.entry_fill) as Fixed | null,
+    exitMinute: row.exit_minute as number | null,
+    exitReason: row.exit_reason as ExitReason | null,
+    exitReference: num(row.exit_reference) as Fixed | null,
+    exitFill: num(row.exit_fill) as Fixed | null,
+    grossPnl: num(row.gross_pnl) as Fixed | null,
+    netPnl: num(row.net_pnl) as Fixed | null,
+    grossR: row.gross_r as Ratio | null,
+    netR: row.net_r as Ratio | null,
+  };
 }
 
 /** Postgres takes at most 65,535 parameters in one statement. */
@@ -205,6 +289,62 @@ export class RunStore {
        WHERE id = $1 AND status IN ('queued', 'running')`,
       [id, message(error)],
     );
+  }
+
+  /** Every signal the run recorded, for every variant, in session and symbol order. */
+  async trades(id: string): Promise<TradeRecord[]> {
+    const result = await this.#pool.query<Record<TradeColumn, unknown>>(
+      `SELECT ${TRADE_COLUMNS.map((c) => (c === "session" ? "session::text AS session" : c)).join(", ")}
+       FROM backtest_trades WHERE run_id = $1
+       ORDER BY session, symbol, variant`,
+      [id],
+    );
+    return result.rows.map(tradeFromRow);
+  }
+
+  /** Every session the run replayed, in order. */
+  async sessions(id: string): Promise<string[]> {
+    const result = await this.#pool.query<{ session: string }>(
+      "SELECT session::text AS session FROM backtest_sessions WHERE run_id = $1 ORDER BY session",
+      [id],
+    );
+    return result.rows.map((row) => row.session);
+  }
+
+  /** Keeps a report on a run, replacing an earlier one of the same kind. */
+  async saveReport(id: string, kind: string, content: unknown, text: string, git: GitState): Promise<void> {
+    await this.#pool.query(
+      `INSERT INTO backtest_reports (run_id, kind, content, text, git_commit, git_dirty)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (run_id, kind) DO UPDATE SET content = EXCLUDED.content, text = EXCLUDED.text,
+         git_commit = EXCLUDED.git_commit, git_dirty = EXCLUDED.git_dirty, created_at = now()`,
+      [id, kind, JSON.stringify(content), text, git.commit, git.dirty],
+    );
+  }
+
+  async report<T = unknown>(id: string, kind: string): Promise<ReportRow<T> | null> {
+    const result = await this.#pool.query<{
+      content: T;
+      text: string;
+      git_commit: string | null;
+      git_dirty: boolean;
+      created_at: Date;
+    }>(
+      "SELECT content, text, git_commit, git_dirty, created_at FROM backtest_reports WHERE run_id = $1 AND kind = $2",
+      [id, kind],
+    );
+    const row = result.rows[0];
+    return row === undefined
+      ? null
+      : {
+          runId: id,
+          kind,
+          content: row.content,
+          text: row.text,
+          gitCommit: row.git_commit,
+          gitDirty: row.git_dirty,
+          createdAt: row.created_at,
+        };
   }
 
   async get(id: string): Promise<RunRow | null> {

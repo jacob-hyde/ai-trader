@@ -8,6 +8,7 @@
  *                                                    runs it here, without Redis, recorded the same way
  *   pnpm backtest status [<run id>]                  recent runs, or one of them
  *   pnpm backtest diff <run id> <run id>             what differs: code, data, configuration, results
+ *   pnpm backtest report <run id>                    computes the run's metrics (L.4), keeps them, prints them
  *   pnpm backtest config preregistered [--blind]
  *                                                    prints the pre-registered in-sample configuration
  *   pnpm backtest null-model                         runs the null-model tripwire on this checkout and
@@ -44,6 +45,7 @@ import {
   runNullModelGate,
 } from "./nullModel.js";
 import { preregisteredConfig } from "./preregistered.js";
+import { METRICS_REPORT, metricsReport, renderMetricsReport } from "./report.js";
 import {
   type BacktestJobResult,
   QUEUE_NAME,
@@ -174,13 +176,28 @@ async function standings(
   return new Map(rows.map((row) => [row.id, nullModelStanding(row, latest.get(row.gitCommit ?? ""))]));
 }
 
+/** Computes a finished run's metrics from what it kept, and keeps them with it. Null for a blind run. */
+async function saveMetrics(pool: pg.Pool, row: RunRow): Promise<string | null> {
+  if (row.blind || row.status !== "completed") {
+    return null;
+  }
+  const store = new RunStore(pool);
+  const report = metricsReport(row, await store.trades(row.id), await store.sessions(row.id));
+  const text = renderMetricsReport(report);
+  await store.saveReport(row.id, METRICS_REPORT, report, text, await readGit());
+  return text;
+}
+
 /** A run's summary if it has one, then the null model on its commit, which says whether any of it can be read. */
-async function printResult(pool: pg.Pool, row: RunRow | null): Promise<void> {
+async function printResult(pool: pg.Pool, row: RunRow | null, keepMetrics = false): Promise<void> {
   if (row === null) {
     return;
   }
   if (row.summary !== null) {
     printSummary(row.summary);
+  }
+  if (keepMetrics && (await saveMetrics(pool, row)) !== null) {
+    console.log(`metrics kept: pnpm backtest report ${row.id}`);
   }
   const standing = (await standings(pool, [row])).get(row.id);
   if (standing != null) {
@@ -255,7 +272,7 @@ async function submit(): Promise<void> {
         process.exitCode = 1;
         return;
       }
-      await printResult(pool, await store.get(String(job.id)));
+      await printResult(pool, await store.get(String(job.id)), true);
     } finally {
       await events.close();
       await queue.close();
@@ -281,7 +298,7 @@ async function runHere(): Promise<void> {
       process.exitCode = 1;
       return;
     }
-    await printResult(pool, await store.get(result.runId));
+    await printResult(pool, await store.get(result.runId), true);
   });
 }
 
@@ -318,6 +335,24 @@ async function diff(): Promise<void> {
       throw new Error(`no run ${left === null ? a : b}`);
     }
     console.log(diffRuns(left, right).join("\n"));
+  });
+}
+
+async function report(): Promise<void> {
+  const [id] = positional;
+  if (id === undefined) {
+    throw new Error("report takes a run id");
+  }
+  await withPool(async (pool) => {
+    const row = await new RunStore(pool).get(id);
+    if (row === null) {
+      throw new Error(`no run ${id}`);
+    }
+    const text = await saveMetrics(pool, row);
+    if (text === null) {
+      throw new Error(`run ${id} is ${row.blind ? "blind" : row.status}: no trades to measure`);
+    }
+    console.log(text);
   });
 }
 
@@ -372,13 +407,14 @@ const commands: Record<string, () => Promise<void>> = {
   run: runHere,
   status,
   diff,
+  report,
   config,
   "null-model": nullModel,
 };
 const chosen = commands[command];
 if (chosen === undefined) {
   console.log(
-    "usage: pnpm backtest worker | submit <config.json> | run <config.json> | status [<run id>] | diff <a> <b> | config preregistered | null-model",
+    "usage: pnpm backtest worker | submit <config.json> | run <config.json> | status [<run id>] | diff <a> <b> | report <run id> | config preregistered | null-model",
   );
   process.exitCode = 1;
 } else {

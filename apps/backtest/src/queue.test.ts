@@ -16,7 +16,9 @@ import {
   submitRun,
 } from "./queue.js";
 import { type RunProgress, runBacktest } from "./run.js";
-import { RunNotQueued, RunStore } from "./store.js";
+import type { TradeRecord } from "./records.js";
+import { METRICS_REPORT, metricsReport, renderMetricsReport } from "./report.js";
+import { RunNotQueued, type RunRow, RunStore } from "./store.js";
 import {
   CLEAN,
   dependencies,
@@ -122,7 +124,7 @@ describe.skipIf(engineUrl === "" || redisUrl === "")("the backtest queue", () =>
     expect(row?.registrationSha256).toMatch(/^[0-9a-f]{64}$/);
 
     // What the queue kept is what the same run makes here, trade for trade.
-    const records: Array<{ variant: string; symbol: string; session: string; netR: number | null }> = [];
+    const records: TradeRecord[] = [];
     const inline = await runBacktest(config, await deps(), {
       onSession: (result) => void records.push(...result.records),
     });
@@ -141,6 +143,22 @@ describe.skipIf(engineUrl === "" || redisUrl === "")("the backtest queue", () =>
     expect(sessions).toBe(5);
     const filled = records.filter((r) => r.netR !== null).length;
     expect(fills).toBe(2 * filled);
+
+    // Read back whole, every field is what the run made, so metrics from the store are the run's (L.4).
+    const stored = await store.trades(String(job.id));
+    expect(stored).toEqual([...records].sort((a, b) => (key(a) < key(b) ? -1 : 1)));
+    const replayed = await store.sessions(String(job.id));
+    expect(replayed).toEqual(SESSIONS.map((h) => h.session));
+    const report = metricsReport(row as RunRow, stored, replayed);
+    expect(report).toEqual(metricsReport(row as RunRow, records, replayed));
+    await store.saveReport(String(job.id), METRICS_REPORT, report, renderMetricsReport(report), CLEAN);
+    const saved = await store.report(String(job.id), METRICS_REPORT);
+    expect(saved?.content).toEqual(JSON.parse(JSON.stringify(report)));
+    expect(saved?.text).toContain("# Metrics: queue test");
+    expect(saved?.gitCommit).toBe(CLEAN.commit);
+    // Computing it again replaces it.
+    await store.saveReport(String(job.id), METRICS_REPORT, report, "again", CLEAN);
+    expect((await store.report(String(job.id), METRICS_REPORT))?.text).toBe("again");
   });
 
   it("keeps runs at the same time apart, and a failed run fails alone without stopping the queue", async () => {
