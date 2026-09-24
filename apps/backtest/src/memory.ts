@@ -5,7 +5,9 @@
 
 import type { StoredBar } from "@trader/adapters";
 import type { Bar, SymbolBar } from "@trader/contracts";
-import type { OpeningVolume, StudySource, WideWickSession } from "./universe.js";
+import { canonical } from "./config.js";
+import { snapshotOf } from "./snapshot.js";
+import type { DataSnapshot, OpeningVolume, StudySource, WideWickSession } from "./universe.js";
 
 export interface MemoryStudySourceData {
   readonly dailyBars: readonly StoredBar[];
@@ -74,6 +76,18 @@ export class MemoryStudySource implements StudySource {
       this.#minute
         .filter((bar) => bar.symbol === symbol && bar.session === session)
         .sort((a, b) => a.minuteOfSession - b.minuteOfSession),
+    );
+  }
+
+  /** Every bar it holds goes into the hash, so any change to them changes the id. */
+  dataSnapshot(): Promise<DataSnapshot> {
+    return Promise.resolve(
+      snapshotOf({
+        dailyBars: this.#daily.length,
+        minuteBars: this.#minute.length,
+        loaded: this.#loaded.length,
+        bars: snapshotOf({ daily: canonical(this.#daily), minute: canonical(this.#minute) }).id,
+      }),
     );
   }
 

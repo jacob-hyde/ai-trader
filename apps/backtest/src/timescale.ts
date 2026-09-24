@@ -4,13 +4,18 @@
  * Opening volumes are summed a month at a time by ts range, which is what lets Timescale touch only that
  * month's chunks: one month of every symbol's opening minutes reads in well under a second. Daily bars
  * come the same way, by session range.
+ *
+ * The data snapshot counts what the loads recorded (checkpoints, rows, when each timeframe last loaded),
+ * the bad-tick scan, and the calendar. Every change to the bars goes through a load that stamps its
+ * checkpoint, so a changed store gives a changed snapshot, without reading 1.2 billion rows to prove it.
  */
 
 import type { StoredBar } from "@trader/adapters";
 import type { Bar } from "@trader/contracts";
 import { fixed } from "@trader/contracts";
 import type pg from "pg";
-import type { OpeningVolume, StudySource, WideWickSession } from "./universe.js";
+import { snapshotOf } from "./snapshot.js";
+import type { DataSnapshot, OpeningVolume, StudySource, WideWickSession } from "./universe.js";
 
 /** The first instant of a month and of the next, in UTC. No session straddles midnight UTC. */
 function monthRange(month: string): [string, string] {
@@ -132,6 +137,40 @@ export class TimescaleStudySource implements StudySource {
       vwap: row.vwap === null ? null : fixed(Number(row.vwap)),
       closed: true,
     }));
+  }
+
+  async dataSnapshot(): Promise<DataSnapshot> {
+    const [checkpoints, scans, candidates, sessions] = await Promise.all([
+      this.#pool.query<{ timeframe: string; status: string; n: string; rows: string; last: Date }>(
+        `SELECT timeframe, status, count(*) AS n, sum(rows) AS rows, max(loaded_at) AS last
+         FROM bar_load_checkpoints GROUP BY timeframe, status ORDER BY timeframe, status`,
+      ),
+      this.#pool.query<{ n: string; last: Date | null }>(
+        "SELECT count(*) AS n, max(scanned_at) AS last FROM bad_tick_scans",
+      ),
+      this.#pool.query<{ n: string }>("SELECT count(*) AS n FROM bad_tick_candidates"),
+      this.#pool.query<{ n: string; first: string | null; last: string | null }>(
+        "SELECT count(*) AS n, min(session)::text AS first, max(session)::text AS last FROM market_sessions",
+      ),
+    ]);
+    const scan = scans.rows[0];
+    const calendar = sessions.rows[0];
+    return snapshotOf({
+      checkpoints: checkpoints.rows.map((row) => ({
+        timeframe: row.timeframe,
+        status: row.status,
+        count: Number(row.n),
+        rows: Number(row.rows),
+        lastLoaded: row.last.toISOString(),
+      })),
+      badTickScans: { months: Number(scan?.n ?? 0), lastScanned: scan?.last?.toISOString() ?? null },
+      badTickCandidates: Number(candidates.rows[0]?.n ?? 0),
+      calendar: {
+        sessions: Number(calendar?.n ?? 0),
+        first: calendar?.first ?? null,
+        last: calendar?.last ?? null,
+      },
+    });
   }
 
   async minuteMonths(): Promise<ReadonlyMap<string, ReadonlySet<string>>> {

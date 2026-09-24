@@ -15,6 +15,9 @@
  * Nothing here stops a second holdout run on the same frozen configuration. A replay is deterministic,
  * so a rerun on the same commit repeats the answer, and a rerun after a bug fix is what section 10 asks
  * for. Every run is recorded with its commit, so a rerun is never silent.
+ *
+ * Any other run is refused from a dirty checkout, or from none, unless its configuration allows it
+ * (L.5). A number from uncommitted code cannot be reproduced, so it is only ever a development run.
  */
 
 import { type RunConfig, canonical } from "./config.js";
@@ -38,6 +41,11 @@ export class RunRefused extends Error {
 export function checkRunAllowed(config: RunConfig, registration: Registration, git: GitState): void {
   const { holdout } = registration.thresholds.samples;
   if (config.to < holdout.from) {
+    if ((git.commit === null || git.dirty) && !config.allowDirty) {
+      throw new RunRefused(
+        `${git.commit === null ? "this is not a git checkout" : "the checkout has uncommitted changes"}, so no commit names the code that would run. Commit first, or allow it (--allow-dirty) for a run that is never read as a result.`,
+      );
+    }
     return;
   }
   const where = `sessions from ${holdout.from} are the holdout (Pre-Registration section 4)`;

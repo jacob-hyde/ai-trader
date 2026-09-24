@@ -48,8 +48,13 @@ pnpm backtest worker                            # takes queued runs until stoppe
 pnpm backtest submit run.json                   # queues a run and follows its progress to the end
 pnpm backtest run run.json                      # the same run here, without Redis
 pnpm backtest status [<run id>]
+pnpm backtest diff <run id> <run id>            # what differs: commit, data snapshot, configuration, results
 pnpm backtest null-model                        # the null-model tripwire on this checkout, kept against the commit
 ```
+
+A run is refused from a checkout with uncommitted changes, so every number names the commit that made it
+(L.5). `--allow-dirty` lets a development run through, and its stored configuration says so. Each run
+records its commit, the registration's sha256, and a snapshot id of the bar store it read.
 
 Every run takes the pre-registration's excluded sessions out of its calendar, and refuses holdout sessions
 until a frozen configuration is committed to `Docs/Pre-Registration.md`. The bad-tick filter (H.8) judges

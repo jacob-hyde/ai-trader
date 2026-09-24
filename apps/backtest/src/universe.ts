@@ -74,6 +74,17 @@ export interface StudySource {
   wideWickSessions(month: string): Promise<readonly WideWickSession[]>;
   /** One symbol's minute bars for one session, in minute order. */
   sessionMinuteBars(symbol: string, session: SessionDate): Promise<readonly Bar[]>;
+  /** What the store holds, as far as a run can tell, and an id for it (L.5). */
+  dataSnapshot(): Promise<DataSnapshot>;
+}
+
+/**
+ * Names the data a run read. Two runs of one configuration at one commit on the same snapshot give the
+ * same result. The id hashes the facts, so equal ids mean equal facts.
+ */
+export interface DataSnapshot {
+  readonly id: string;
+  readonly facts: Readonly<Record<string, unknown>>;
 }
 
 export interface UniverseRules {

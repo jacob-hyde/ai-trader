@@ -573,6 +573,29 @@ describe("determinism and isolation", () => {
     expect(a.fills).toEqual(plain.fills);
     expect(b.records).toEqual(plain.records.filter((r) => r.direction === "long"));
   });
+
+  it("reproduces byte for byte from the same configuration, seed, and data snapshot (L.5)", async () => {
+    const first = dependencies(market(), REGISTRATION);
+    const second = dependencies(market(), REGISTRATION);
+    expect(await second.study.dataSnapshot()).toEqual(await first.study.dataSnapshot());
+    const bytes = async (deps: RunDependencies) => {
+      const { results, summary } = await collect(testConfig(), deps);
+      const { elapsedMs: _elapsed, ...kept } = summary;
+      return JSON.stringify({ results, summary: kept });
+    };
+    expect(await bytes(second)).toBe(await bytes(first));
+    // A different store is a different snapshot.
+    const other = dependencies(
+      syntheticMarket({
+        symbols: SYMBOLS.slice(1),
+        warmup: WARMUP,
+        sessions: SESSIONS,
+        scenario: () => "driftlessWalk",
+      }),
+      REGISTRATION,
+    );
+    expect((await other.study.dataSnapshot()).id).not.toBe((await first.study.dataSnapshot()).id);
+  });
 });
 
 describe("failures", () => {

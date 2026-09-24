@@ -116,6 +116,10 @@ describe.skipIf(engineUrl === "" || redisUrl === "")("the backtest queue", () =>
       progress: { phase: "replay", sessionsDone: 5, sessionsTotal: 5 },
     });
     expect(progress.at(-1)).toMatchObject({ phase: "replay", sessionsDone: 5, sessionsTotal: 5 });
+    // The data it read, named at the claim (L.5).
+    expect(row?.dataSnapshot).toEqual(await (await deps()).study.dataSnapshot());
+    expect(row?.dataSnapshot?.id).toMatch(/^[0-9a-f]{16}$/);
+    expect(row?.registrationSha256).toMatch(/^[0-9a-f]{64}$/);
 
     // What the queue kept is what the same run makes here, trade for trade.
     const records: Array<{ variant: string; symbol: string; session: string; netR: number | null }> = [];

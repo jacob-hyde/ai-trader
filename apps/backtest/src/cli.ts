@@ -2,10 +2,12 @@
  * The backtest CLI. Needs no web app: queue a run and follow it, run one here, or look at past runs.
  *
  *   pnpm backtest worker [--concurrency n]           takes queued runs until stopped
- *   pnpm backtest submit <config.json> [--blind] [--detach]
+ *   pnpm backtest submit <config.json> [--blind] [--allow-dirty] [--detach]
  *                                                    queues a run and follows it to the end
- *   pnpm backtest run <config.json> [--blind]        runs it here, without Redis, recorded the same way
+ *   pnpm backtest run <config.json> [--blind] [--allow-dirty]
+ *                                                    runs it here, without Redis, recorded the same way
  *   pnpm backtest status [<run id>]                  recent runs, or one of them
+ *   pnpm backtest diff <run id> <run id>             what differs: code, data, configuration, results
  *   pnpm backtest config preregistered [--blind]
  *                                                    prints the pre-registered in-sample configuration
  *   pnpm backtest null-model                         runs the null-model tripwire on this checkout and
@@ -13,6 +15,9 @@
  *
  * A path is taken relative to where pnpm was run. DATABASE_URL (the engine role) is always needed,
  * REDIS_URL for worker and submit.
+ *
+ * A run is refused from a checkout with uncommitted changes (L.5). --allow-dirty lets a development run
+ * through, and its stored configuration says so.
  *
  * Every run shown with a commit also shows the null model's verdict on that commit. No number from a run
  * is read until it says pass.
@@ -29,6 +34,7 @@ import { QueueEvents } from "bullmq";
 import { config as loadDotenv } from "dotenv";
 import pg from "pg";
 import { type RunConfig, parseRunConfig } from "./config.js";
+import { diffRuns } from "./diff.js";
 import { readGit } from "./git.js";
 import {
   NULL_MODEL_EXIT_IDS,
@@ -81,7 +87,11 @@ function readConfig(file: string | undefined): RunConfig {
     throw new Error(`${command} needs a configuration file`);
   }
   const raw = JSON.parse(readFileSync(fromCaller(file), "utf8")) as Record<string, unknown>;
-  return parseRunConfig(flags.has("--blind") ? { ...raw, blind: true } : raw);
+  return parseRunConfig({
+    ...raw,
+    ...(flags.has("--blind") ? { blind: true } : {}),
+    ...(flags.has("--allow-dirty") ? { allowDirty: true } : {}),
+  });
 }
 
 const seconds = (ms: number) => `${(ms / 1_000).toFixed(1)} s`;
@@ -142,6 +152,7 @@ function printRow(row: RunRow, standing: NullModelStanding | null): void {
   console.log(
     `${row.id}  ${row.status.padEnd(9)} ${row.blind ? "blind " : ""}${row.name}` +
       `  (created ${row.createdAt.toISOString()}${row.gitCommit === null ? "" : `, commit ${row.gitCommit.slice(0, 8)}${row.gitDirty ? "+dirty" : ""}`}` +
+      `${row.dataSnapshot === null ? "" : `, data ${row.dataSnapshot.id}`}` +
       `${standing === null ? "" : `, ${standing.short}`})`,
   );
   if (row.progress !== null && row.status === "running") {
@@ -295,6 +306,21 @@ async function status(): Promise<void> {
   });
 }
 
+async function diff(): Promise<void> {
+  const [a, b] = positional;
+  if (a === undefined || b === undefined) {
+    throw new Error("diff takes two run ids");
+  }
+  await withPool(async (pool) => {
+    const store = new RunStore(pool);
+    const [left, right] = await Promise.all([store.get(a), store.get(b)]);
+    if (left === null || right === null) {
+      throw new Error(`no run ${left === null ? a : b}`);
+    }
+    console.log(diffRuns(left, right).join("\n"));
+  });
+}
+
 async function config(): Promise<void> {
   if (positional[0] !== "preregistered") {
     throw new Error("config takes: preregistered");
@@ -345,13 +371,14 @@ const commands: Record<string, () => Promise<void>> = {
   submit,
   run: runHere,
   status,
+  diff,
   config,
   "null-model": nullModel,
 };
 const chosen = commands[command];
 if (chosen === undefined) {
   console.log(
-    "usage: pnpm backtest worker | submit <config.json> | run <config.json> | status [<run id>] | config preregistered | null-model",
+    "usage: pnpm backtest worker | submit <config.json> | run <config.json> | status [<run id>] | diff <a> <b> | config preregistered | null-model",
   );
   process.exitCode = 1;
 } else {

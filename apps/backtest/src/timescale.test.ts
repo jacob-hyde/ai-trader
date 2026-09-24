@@ -117,6 +117,31 @@ describe.skipIf(engineUrl === "")("the bar store as the study's source", () => {
     }
   });
 
+  // Other test files load into the same store at the same time, so this only asserts that a change shows.
+  it("names the data with a snapshot that changes when a load stamps a checkpoint (L.5)", async () => {
+    const source = new TimescaleStudySource(pool);
+    const before = await source.dataSnapshot();
+    expect(before.id).toMatch(/^[0-9a-f]{16}$/);
+    expect(before.facts).toMatchObject({
+      checkpoints: expect.arrayContaining([
+        expect.objectContaining({ timeframe: "1Min", status: "complete" }),
+      ]),
+      calendar: expect.objectContaining({ sessions: expect.any(Number) }),
+    });
+    try {
+      await pool.query(
+        `INSERT INTO bar_load_checkpoints (timeframe, symbol, month, status, rows, sessions)
+         VALUES ('1Min', $1, '2015-07-01', 'complete', 1, 1)`,
+        [LOADED],
+      );
+      expect((await source.dataSnapshot()).id).not.toBe(before.id);
+    } finally {
+      await pool.query("DELETE FROM bar_load_checkpoints WHERE symbol = $1 AND month = '2015-07-01'", [
+        LOADED,
+      ]);
+    }
+  });
+
   it("reads a month of daily bars, opening volumes, and the loaded months", async () => {
     const source = new TimescaleStudySource(pool);
     const ours = <T extends { symbol: string }>(rows: readonly T[]) =>

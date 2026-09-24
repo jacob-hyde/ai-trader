@@ -13,7 +13,7 @@ import {
   parseExclusions,
   parseRegistration,
 } from "./registration.js";
-import { testConfig } from "./testing.js";
+import { CLEAN, registrationFor, testConfig } from "./testing.js";
 
 const REAL = readFileSync(REGISTRATION_PATH, "utf8");
 
@@ -180,8 +180,29 @@ describe("the pre-registered configuration", () => {
         exit: { kind: "fixedR", targetR: 2, breakevenAtR: 1 },
       },
     ]);
-    // In-sample only, so it needs no frozen configuration.
-    expect(() => checkRunAllowed(config, registration, { commit: null, dirty: true })).not.toThrow();
+    // In-sample only, so it needs no frozen configuration. It does need a clean checkout (L.5).
+    expect(() => checkRunAllowed(config, registration, CLEAN)).not.toThrow();
+  });
+});
+
+describe("the dirty-tree guard (L.5)", () => {
+  const registration = registrationFor({ holdoutFrom: "2027-01-04" });
+
+  it("refuses a run from uncommitted code, or from no checkout, by default", () => {
+    expect(() => checkRunAllowed(testConfig(), registration, { commit: CLEAN.commit, dirty: true })).toThrow(
+      /uncommitted changes.*--allow-dirty/,
+    );
+    expect(() => checkRunAllowed(testConfig(), registration, { commit: null, dirty: false })).toThrow(
+      /not a git checkout/,
+    );
+    expect(() => checkRunAllowed(testConfig(), registration, CLEAN)).not.toThrow();
+    expect(testConfig().allowDirty).toBe(false);
+  });
+
+  it("lets one through when its configuration allows it, which the stored configuration then shows", () => {
+    const allowed = testConfig({ allowDirty: true });
+    expect(() => checkRunAllowed(allowed, registration, { commit: CLEAN.commit, dirty: true })).not.toThrow();
+    expect(() => checkRunAllowed(allowed, registration, { commit: null, dirty: false })).not.toThrow();
   });
 });
 
