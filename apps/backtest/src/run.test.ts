@@ -376,6 +376,41 @@ describe("progress", () => {
   });
 });
 
+describe("the year-by-year table (L.6)", () => {
+  it("splits every variant's trades by calendar year, and the years add up to the whole", async () => {
+    const warmup = weekdays("2025-11-17", 20);
+    const sessions = weekdays("2025-12-29", 6);
+    const data = syntheticMarket({
+      symbols: SYMBOLS,
+      warmup,
+      sessions,
+      scenario: (symbol, session) =>
+        SCENARIOS[
+          (SYMBOLS.indexOf(symbol) + sessions.findIndex((h) => h.session === session)) % SCENARIOS.length
+        ] as Scenario,
+    });
+    const config = testConfig({ from: "2025-12-29", to: sessions.at(-1)?.session ?? "" });
+    const { records, summary } = await collect(config, dependencies(data, REGISTRATION));
+    const outcomes = summary.outcomes?.byVariant ?? [];
+    expect(outcomes.length).toBeGreaterThan(0);
+    for (const v of outcomes) {
+      const traded = records.filter(
+        (r) => r.variant === v.variant && r.direction === v.direction && r.gatePassed && r.netR !== null,
+      );
+      const inYear = (year: number) => traded.filter((r) => r.session.startsWith(String(year)));
+      expect(v.byYear.map((y) => y.year)).toEqual([2025, 2026].filter((year) => inYear(year).length > 0));
+      for (const y of v.byYear) {
+        const net = inYear(y.year).map((r) => r.netR as number);
+        expect(y.trades).toBe(net.length);
+        expect(y.totalNetR).toBe(net.reduce((a, b) => a + b, 0));
+        expect(y.meanNetR).toBe(Math.floor(y.totalNetR / y.trades));
+      }
+      expect(v.byYear.reduce((n, y) => n + y.trades, 0)).toBe(v.filled);
+    }
+    expect(outcomes.some((v) => v.byYear.length === 2)).toBe(true);
+  });
+});
+
 describe("blind", () => {
   it("does the same work and keeps nothing after the range close", async () => {
     const open = await collect(testConfig());

@@ -131,6 +131,11 @@ function printSummary(summary: RunSummary): void {
         `mean net ${r(v.meanNetR)}, gross ${r(v.meanGrossR)}`,
     );
   }
+  console.log("year by year, mean net R over trades:");
+  for (const v of outcomes.byVariant) {
+    const years = v.byYear.map((y) => `${String(y.year)} ${r(y.meanNetR)}/${String(y.trades)}`);
+    console.log(`  ${v.variant} ${v.direction}: ${years.join("  ") || "no trades"}`);
+  }
 }
 
 function printRow(row: RunRow, standing: NullModelStanding | null): void {

@@ -520,6 +520,7 @@ the cost model. Neither alone is the proof.
 ### L.6 — ORB backtest realism rules
 - **Description:** (1) Intrabar ordering: a 1-min bar touching both trigger and stop is treated as a stop-out, always. (2) Stop-order entries fill as market orders into momentum; use the separate pessimistic slippage parameter from C.8. (3) Regime stability as a hard gate: year-by-year breakdown of expectancy; an edge concentrated in 2020–21 fails. (4) Survivorship: universe built from bars that include in-period names delisted since (H.7).
 - **Acceptance:** Each rule has a test that flips the result when violated; the year-by-year table is a required output of every ORB run.
+- **Done:** (2026-09-24). Rules 1 to 4 broken one at a time in both the simulated broker and the trade simulator: every break fails a test. Survivorship has its own test (inactive assets are listed). Every run's summary carries the year-by-year table.
 - **Depends on:** L.2, C.8, H.7  **Labels:** backtest, validation  **Estimate:** 3  **Priority:** P0
 
 ---
