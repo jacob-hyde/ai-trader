@@ -145,9 +145,20 @@ export interface InPlayName {
  */
 export type UnrankableReason = "minutesNotLoaded" | "baselineEmpty";
 
+/** A name that passed the screen, before any ranking: what a strategy that does not rank on RVOL reads. */
+export interface EligibleName {
+  readonly symbol: string;
+  /** On the session's own share basis. */
+  readonly priorClose: Fixed;
+  readonly dailyAtr: Fixed;
+  readonly averageVolume: number;
+}
+
 export interface SessionPlan {
   readonly session: SessionDate;
   readonly eligible: number;
+  /** Every eligible name, in symbol order. */
+  readonly eligibleNames: readonly EligibleName[];
   /** Eligible with opening RVOL above the minimum. The in-play names are the first topN of these. */
   readonly qualified: number;
   readonly inPlay: readonly InPlayName[];
@@ -348,6 +359,7 @@ export class StudyUniverse {
     const corrupt = this.#corrupt.get(session) ?? new Set<string>();
     const qualified: Array<Omit<InPlayName, "rank">> = [];
     const unrankable: Array<{ symbol: string; reason: UnrankableReason }> = [];
+    const eligibleNames: EligibleName[] = [];
     let eligible = 0;
 
     for (const [symbol, history] of this.#histories) {
@@ -386,6 +398,7 @@ export class StudyUniverse {
         continue;
       }
       eligible += 1;
+      eligibleNames.push({ symbol, priorClose, dailyAtr, averageVolume: volume / L });
 
       // With no opening volume today a name cannot qualify, whatever its baseline, so it is never
       // unrankable. One that did not trade at all today (no daily bar, e.g. a ticker gone or renamed
@@ -419,6 +432,7 @@ export class StudyUniverse {
     return {
       session,
       eligible,
+      eligibleNames: eligibleNames.sort((a, b) => bySymbol(a.symbol, b.symbol)),
       qualified: qualified.length,
       inPlay: qualified.slice(0, rules.topN).map((name, i) => ({ ...name, rank: i + 1 })),
       unrankable,
