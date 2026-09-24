@@ -13,7 +13,7 @@
  * H.8 in the replay, the null model passing on the same commit) are L.2's to check.
  */
 
-import { type RunConfig, parseRunConfig } from "./config.js";
+import { DEFAULT_BAD_TICKS, type RunConfig, parseRunConfig } from "./config.js";
 import type { Thresholds } from "./registration.js";
 
 export interface PreregisteredOptions {
@@ -65,6 +65,8 @@ export function preregisteredConfig(thresholds: Thresholds, options: Preregister
       stopExit: { bps: 10, ticks: 2 },
     },
     maxCostToRisk: strategy.maxCostToRisk,
+    // Section 3: the H.8 filter runs between the store and the broker.
+    badTicks: DEFAULT_BAD_TICKS,
     // R does not depend on size with no commission, so one share is every size.
     account: { kind: "perSignal", shares: 1 },
     seed: thresholds.statistics.seed,

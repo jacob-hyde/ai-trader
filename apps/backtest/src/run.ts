@@ -4,7 +4,8 @@
  *
  * Every run replays the study's calendar, which is the store's calendar less the registration's
  * excluded sessions. That is not a setting: the amendment that took 2022-03-08 out applies to anything
- * measured on this store.
+ * measured on this store. The bad-tick filter (H.8) is a setting, on in the pre-registered run, and
+ * judges every minute bar before the broker or the engine sees it.
  *
  * Blind. A blind run does all of the work and keeps nothing that happened after 09:35: no trade, no
  * fill, no exit, no count of entries that triggered or expired, no R. What it hands back is timing and
@@ -14,10 +15,10 @@
  * are computed in memory, since the mechanics have to run to be tested, and dropped with the process.
  */
 
-import { BacktestAdapter, type ReplaySource, withoutSessions } from "@trader/adapters";
-import type { Ratio } from "@trader/contracts";
+import { BacktestAdapter, type ReplaySource, withBadTickFilter, withoutSessions } from "@trader/adapters";
+import type { Fixed, Ratio } from "@trader/contracts";
 import type { RunConfig } from "./config.js";
-import { costModelFor, startingCashFor } from "./config.js";
+import { badTickConfigFor, costModelFor, startingCashFor } from "./config.js";
 import { BacktestEngine, type SessionOutput, type SessionStats } from "./engine.js";
 import { type GitState, checkRunAllowed } from "./guard.js";
 import type { Registration } from "./registration.js";
@@ -44,11 +45,23 @@ export type RunProgress =
       readonly elapsedMs: number;
     };
 
+/** A high or low the bad-tick filter cut before the broker saw its bar. */
+export interface BadTick {
+  readonly symbol: string;
+  readonly minute: number;
+  readonly side: "high" | "low";
+  readonly reported: Fixed;
+  readonly kept: Fixed;
+  readonly limit: Fixed;
+}
+
 /** What a session hands the store. A blind run's carries the stats and nothing else. */
 export interface SessionResult {
   readonly stats: SessionStats;
   readonly records: readonly TradeRecord[];
   readonly fills: SessionOutput["fills"];
+  /** Null for a blind run: the bars it judged run past 09:35. */
+  readonly badTicks: readonly BadTick[] | null;
 }
 
 export interface RunHooks {
@@ -75,8 +88,10 @@ export interface RunSummary {
   readonly elapsedMs: number;
   readonly excludedSessions: readonly string[];
   readonly excludedSymbols: number;
-  /** H.8 is not built yet. Recorded so a run made before it says so. */
-  readonly badTickFilter: "none";
+  /** Whether the H.8 filter stood between the store and the broker. Its settings are in the config. */
+  readonly badTickFilter: "on" | "off";
+  /** Symbol-sessions left out as corrupted. Known from the store, not from any trade, so blind keeps it. */
+  readonly corruptSessions: number;
   readonly eligible: number;
   readonly inPlay: number;
   readonly unrankable: number;
@@ -84,6 +99,8 @@ export interface RunSummary {
   readonly gatePassed: Readonly<Record<string, number>>;
   /** Null for a blind run. */
   readonly outcomes: {
+    /** Highs and lows the bad-tick filter cut. */
+    readonly badTicks: number;
     readonly closedAtSessionEnd: number;
     readonly expiredEntries: number;
     readonly unloaded: number;
@@ -107,7 +124,19 @@ export async function runBacktest(
   checkRunAllowed(config, deps.registration, deps.git);
 
   const excluded = deps.registration.thresholds.samples.excludedSessions;
-  const source = withoutSessions(deps.replay, excluded);
+  // The filter sits on top, so it judges exactly the bars the replay hands the broker.
+  const badTickConfig = badTickConfigFor(config);
+  const cuts = new Map<string, BadTick[]>();
+  const withoutExcluded = withoutSessions(deps.replay, excluded);
+  const source =
+    badTickConfig === null
+      ? withoutExcluded
+      : withBadTickFilter(withoutExcluded, badTickConfig, (bar, clipped) => {
+          const list = cuts.get(bar.session) ?? cuts.set(bar.session, []).get(bar.session);
+          for (const { side, reported, kept, limit } of clipped) {
+            list?.push({ symbol: bar.symbol, minute: bar.minuteOfSession, side, reported, kept, limit });
+          }
+        });
   const calendar = (await source.sessions(DAWN, config.to)).map((hours) => hours.session);
   const sessionsTotal = calendar.filter((session) => session >= config.from).length;
   const progress = async (value: RunProgress) => {
@@ -122,7 +151,16 @@ export async function runBacktest(
     }
   });
 
-  const totals = { eligible: 0, inPlay: 0, unrankable: 0, signals: 0, closed: 0, expired: 0 };
+  const totals = {
+    eligible: 0,
+    inPlay: 0,
+    unrankable: 0,
+    signals: 0,
+    closed: 0,
+    expired: 0,
+    badTicks: 0,
+    corrupt: 0,
+  };
   const gatePassed = new Map(config.variants.map((variant) => [variant.id, 0]));
   const outcomes = new Map<string, { signals: number; gatePassed: number; net: number[]; gross: number[] }>();
   let sessionsDone = 0;
@@ -142,10 +180,14 @@ export async function runBacktest(
     universe,
     onSession: async (output) => {
       const { stats } = output;
+      const badTicks = cuts.get(stats.session) ?? [];
+      cuts.delete(stats.session);
       sessionsDone += 1;
+      totals.badTicks += badTicks.length;
       totals.eligible += stats.eligible;
       totals.inPlay += stats.inPlay;
       totals.unrankable += stats.unrankable;
+      totals.corrupt += stats.corruptSymbols.length;
       totals.signals += stats.signals;
       totals.closed += output.closedAtSessionEnd;
       totals.expired += output.expiredEntries;
@@ -167,8 +209,8 @@ export async function runBacktest(
       }
       await hooks.onSession?.(
         config.blind
-          ? { stats, records: [], fills: [] }
-          : { stats, records: output.records, fills: output.fills },
+          ? { stats, records: [], fills: [], badTicks: null }
+          : { stats, records: output.records, fills: output.fills, badTicks },
       );
       await progress({
         phase: "replay",
@@ -191,7 +233,8 @@ export async function runBacktest(
       elapsedMs: elapsedMs(),
       excludedSessions: excluded,
       excludedSymbols: config.universe.excludeSymbols.length,
-      badTickFilter: "none",
+      badTickFilter: badTickConfig === null ? "off" : "on",
+      corruptSessions: totals.corrupt,
       eligible: totals.eligible,
       inPlay: totals.inPlay,
       unrankable: totals.unrankable,
@@ -200,6 +243,7 @@ export async function runBacktest(
       outcomes: config.blind
         ? null
         : {
+            badTicks: totals.badTicks,
             closedAtSessionEnd: totals.closed,
             expiredEntries: totals.expired,
             unloaded: report.unloaded.length,

@@ -16,7 +16,7 @@
  * - stopRunWick: one bar wicks a few ticks through the stop and closes back above the entry.
  * - haltAndReopen: bars stop arriving for 10 to 30 minutes, then trading reopens with a 1% to 5% gap,
  *   up or down by seed.
- * - badTick: one bar carries an outlier high or low 20% to 50% away while its open and close are normal.
+ * - badTick: one bar carries an outlier high or low 25% to 50% away while its open and close are normal.
  *
  * Every scripted scenario opens with a bullish opening range and a clean breakout bar, so the ORB
  * signals on it and the entry fills. The script is written around the range high as the entry and
@@ -291,7 +291,8 @@ function runScript(
     }
     case "badTick": {
       const upward = rng.next() < 0.5;
-      const outlier = session.price * (1 + ((upward ? 1 : -1) * rng.int(2_000, 5_000)) / 10_000);
+      // Past the bad-tick filter's 20%, so a filtered replay always cuts it.
+      const outlier = session.price * (1 + ((upward ? 1 : -1) * rng.int(2_500, 5_000)) / 10_000);
       const close = session.price + TICK;
       session.push(
         session.price,

@@ -70,6 +70,53 @@ describe.skipIf(engineUrl === "")("the bar store as the study's source", () => {
     await pool.end();
   });
 
+  it("reads a symbol-session's minute bars in order", async () => {
+    const bars = await new TimescaleStudySource(pool).sessionMinuteBars(LOADED, "2023-03-07");
+    expect(bars.map((b) => [b.session, b.minuteOfSession, b.volume])).toEqual(
+      Array.from({ length: 7 }, (_, m) => ["2023-03-07", m, 110 + m]),
+    );
+  });
+
+  // In a month the store has no bars for, so the real scan rows are never touched.
+  it("reads the wide-wick candidates, and refuses a month loaded after its scan", async () => {
+    const source = new TimescaleStudySource(pool);
+    const month = "2015-06";
+    try {
+      // No minute bars loaded that month: nothing to have scanned.
+      expect(await source.wideWickSessions(month)).toEqual([]);
+      await pool.query(
+        `INSERT INTO bar_load_checkpoints (timeframe, symbol, month, status, rows, sessions, loaded_at)
+         VALUES ('1Min', $1, '2015-06-01', 'complete', 1, 1, now())`,
+        [LOADED],
+      );
+      await expect(source.wideWickSessions(month)).rejects.toThrow(
+        /2015-06 were loaded after their bad-tick scan/,
+      );
+      await pool.query(
+        `INSERT INTO bad_tick_scans (month, scanned_at) VALUES ('2015-06-01', now() + interval '1 minute')`,
+      );
+      await pool.query(
+        `INSERT INTO bad_tick_candidates (symbol, session, wide_bars) VALUES ($1, '2015-06-10', 3)`,
+        [LOADED],
+      );
+      expect(await source.wideWickSessions(month)).toEqual([
+        { symbol: LOADED, session: "2015-06-10", wideBars: 3 },
+      ]);
+      await pool.query(
+        `UPDATE bar_load_checkpoints SET loaded_at = now() + interval '2 minutes'
+         WHERE symbol = $1 AND month = '2015-06-01'`,
+        [LOADED],
+      );
+      await expect(source.wideWickSessions(month)).rejects.toThrow(/pnpm bars suspects/);
+    } finally {
+      await pool.query("DELETE FROM bad_tick_candidates WHERE symbol = $1", [LOADED]);
+      await pool.query("DELETE FROM bad_tick_scans WHERE month = '2015-06-01'");
+      await pool.query("DELETE FROM bar_load_checkpoints WHERE symbol = $1 AND month = '2015-06-01'", [
+        LOADED,
+      ]);
+    }
+  });
+
   it("reads a month of daily bars, opening volumes, and the loaded months", async () => {
     const source = new TimescaleStudySource(pool);
     const ours = <T extends { symbol: string }>(rows: readonly T[]) =>

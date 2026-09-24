@@ -29,8 +29,9 @@
  * snapshot of, or trades. Picking the universe without look-ahead is the caller's job: an in-play list
  * ranked on opening volume is only known at 09:35, and the engine must not act on it before then.
  *
- * There is no bad-tick filter (H.8). A single bad print in the store fills a resting stop entry and, in
- * the same bar, a target. Until H.8 sits between the store and the broker, a spike is a trade.
+ * The bad-tick filter (H.8) is not built in: wrap the source in withBadTickFilter to put it between the
+ * store and the broker. Replayed without it, a single bad print fills a resting stop entry and, in the
+ * same bar, a target.
  *
  * Quotes are modeled. The store has bars only, so a bar's quote is its close with the cost model's
  * spread around it: the quote the broker fills against, and the one a cost gate should see.

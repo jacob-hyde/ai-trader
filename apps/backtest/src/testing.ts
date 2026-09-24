@@ -8,7 +8,7 @@ import { MemoryReplaySource, type SessionHours, type StoredBar } from "@trader/a
 import type { Fixed, SymbolBar } from "@trader/contracts";
 import { fixed } from "@trader/contracts";
 import { DEFAULT_PATH_CONFIG, type Scenario, generatePath } from "@trader/core";
-import { type RunConfig, type RunConfigInput, parseRunConfig } from "./config.js";
+import { DEFAULT_BAD_TICKS, type RunConfig, type RunConfigInput, parseRunConfig } from "./config.js";
 import type { GitState } from "./guard.js";
 import { MemoryStudySource } from "./memory.js";
 import { REGISTRATION_PATH, type Registration, parseRegistration } from "./registration.js";
@@ -199,6 +199,7 @@ export function testConfig(overrides: Partial<RunConfigInput> = {}): RunConfig {
       stopExit: { bps: 10, ticks: 2 },
     },
     maxCostToRisk: 0.15,
+    badTicks: DEFAULT_BAD_TICKS,
     account: { kind: "perSignal", shares: 10 },
     seed: 20260922,
     ...overrides,

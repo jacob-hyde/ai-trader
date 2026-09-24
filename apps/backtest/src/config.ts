@@ -13,7 +13,11 @@
 
 import type { Fixed, Ratio, SessionDate } from "@trader/contracts";
 import {
+  type BadTickConfig,
   type CostModelConfig,
+  DEFAULT_BAD_TICK_CONFIG,
+  DEFAULT_MAX_CUTS_PER_SESSION,
+  assertBadTickConfig,
   type CostToRiskConfig,
   type DecisionConfig,
   type OrbParams,
@@ -128,6 +132,23 @@ const baseSchema = z
       .strict(),
     /** Round-trip cost over stop distance at or below this passes the gate. 0.15 is 0.15R. */
     maxCostToRisk: fraction,
+    /**
+     * The bad-tick filter (H.8) between the store and the broker, or null to replay bars as stored. A
+     * high or low past both its bar's body and the last close by more than maxExcursion (0.20 is 20%),
+     * or maxExcursionRanges average minute ranges over the last rangeBars bars if that is further, is
+     * cut back to the body.
+     */
+    badTicks: z
+      .object({
+        // At least 10%, so every cut falls inside the store's wide-wick candidates (pnpm bars suspects).
+        maxExcursion: z.number().min(0.1).max(1),
+        maxExcursionRanges: z.number().int().min(0).max(100),
+        rangeBars: z.number().int().min(1).max(390),
+        /** More cuts than this in one symbol-session and the session is left out whole, as corrupted. */
+        maxCutsPerSession: z.number().int().min(0).max(780),
+      })
+      .strict()
+      .nullable(),
     account: accountSchema,
     /** Carried for the statistics that resample the result (L.2). Nothing in a replay is random. */
     seed: z.number().int(),
@@ -212,6 +233,26 @@ export function decisionFor(config: RunConfig): DecisionConfig | null {
 }
 
 /** Cash the simulated broker starts with. Per signal it is large enough that no order ever waits on it. */
+/** The filter's settings in core's units, or null when it is off. */
+export function badTickConfigFor(config: RunConfig): BadTickConfig | null {
+  const { badTicks } = config;
+  return badTicks === null
+    ? null
+    : {
+        maxExcursion: toRatio(badTicks.maxExcursion),
+        maxExcursionRanges: badTicks.maxExcursionRanges,
+        rangeBars: badTicks.rangeBars,
+      };
+}
+
+/** Core's default filter, in a run configuration's units. */
+export const DEFAULT_BAD_TICKS: NonNullable<RunConfig["badTicks"]> = {
+  maxExcursion: DEFAULT_BAD_TICK_CONFIG.maxExcursion / 10_000,
+  maxExcursionRanges: DEFAULT_BAD_TICK_CONFIG.maxExcursionRanges,
+  rangeBars: DEFAULT_BAD_TICK_CONFIG.rangeBars,
+  maxCutsPerSession: DEFAULT_MAX_CUTS_PER_SESSION,
+};
+
 export function startingCashFor(config: RunConfig): Fixed {
   return fromNumber(config.account.kind === "asDeployed" ? config.account.startingCash : 1_000_000_000);
 }
@@ -246,6 +287,10 @@ function checkPieces(config: RunConfig, ctx: z.RefinementCtx): void {
   });
   try {
     assertCostModelConfig(costModelFor(config));
+    const badTicks = badTickConfigFor(config);
+    if (badTicks !== null) {
+      assertBadTickConfig(badTicks);
+    }
     assertCostToRiskConfig(costToRiskFor(config));
   } catch (error) {
     problem(["costs"], error);

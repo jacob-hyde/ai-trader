@@ -92,6 +92,8 @@ export interface SessionStats {
   readonly unrankable: number;
   /** Which eligible names could not be ranked, and why. A data hole to explain before a result counts. */
   readonly unrankableSymbols: SessionPlan["unrankable"];
+  /** Symbols left out as corrupted: the bad-tick filter cut them more than a session can take. */
+  readonly corruptSymbols: readonly string[];
   /** In-play names whose opening range gave a signal. */
   readonly signals: number;
   /** Per variant: signals the gate passed, and signals refused before any order. */
@@ -596,6 +598,7 @@ export class BacktestEngine {
         inPlay: plan.inPlay.length,
         unrankable: plan.unrankable.length,
         unrankableSymbols: plan.unrankable,
+        corruptSymbols: plan.corrupt,
         signals: this.#signals,
         byVariant: Object.fromEntries(this.#byVariant),
       },

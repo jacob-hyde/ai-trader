@@ -100,7 +100,7 @@ function printSummary(summary: RunSummary): void {
   console.log(
     [
       `${summary.blind ? "blind run" : "run"}: ${String(summary.sessions)} sessions, ${summary.bars.toLocaleString()} bars, ${seconds(summary.elapsedMs)}`,
-      `excluded sessions: ${summary.excludedSessions.join(", ") || "none"}; excluded symbols: ${String(summary.excludedSymbols)}; bad-tick filter: ${summary.badTickFilter}`,
+      `excluded sessions: ${summary.excludedSessions.join(", ") || "none"}; excluded symbols: ${String(summary.excludedSymbols)}; bad-tick filter: ${summary.badTickFilter}, corrupted symbol-sessions left out: ${String(summary.corruptSessions)}`,
       `eligible ${perSession(summary.eligible)} a session, in play ${perSession(summary.inPlay)}, unrankable ${String(summary.unrankable)} in all`,
       `signals ${String(summary.signals)}; passed the cost gate: ${Object.entries(summary.gatePassed)
         .map(([variant, n]) => `${variant} ${String(n)}`)
@@ -112,7 +112,7 @@ function printSummary(summary: RunSummary): void {
   }
   const { outcomes } = summary;
   console.log(
-    `closed at the bell ${String(outcomes.closedAtSessionEnd)}, expired ${String(outcomes.expiredEntries)}, unloaded ${String(outcomes.unloaded)}`,
+    `bad ticks cut ${String(outcomes.badTicks)}, closed at the bell ${String(outcomes.closedAtSessionEnd)}, expired ${String(outcomes.expiredEntries)}, unloaded ${String(outcomes.unloaded)}`,
   );
   for (const v of outcomes.byVariant) {
     console.log(

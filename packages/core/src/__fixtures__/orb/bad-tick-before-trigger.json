@@ -1,7 +1,7 @@
 {
   "fixtureVersion": 1,
   "setup": "orb@1.0.0",
-  "description": "A single print at 24.90 on a 20 dollar name, before any real breakout. Core has no bad-tick filter: that is upstream work (H.8). Unfiltered, the spike triggers the resting stop entry exactly as it would at the broker, and the trade then stops out. This locks that behavior so a filter arriving is a deliberate fixture change. Never feed unfiltered bars to a variant with a target: the same spike would fill it.",
+  "description": "A single print at 24.90 on a 20 dollar name, before any real breakout. simulateTrade does not filter bad ticks: the H.8 filter (badTicks.ts) runs on the bars before them. Unfiltered, the spike triggers the resting stop entry exactly as it would at the broker, and the trade then stops out. This locks the unfiltered behavior; badTicks.test.ts shows the same bars filtered never fill at minute 6. Never feed unfiltered bars to a variant with a target: the same spike would fill it.",
   "costModel": "default",
   "session": "2026-01-05",
   "symbol": "AAA",

@@ -9,7 +9,10 @@
  *   minimum;
  * - those last `lookbackSessions` sessions all fall inside the last `lookbackWindowSessions` sessions of
  *   the calendar, which drops a new listing and a ticker just reused by another company;
- * - it is not on the exclusion list.
+ * - it is not on the exclusion list;
+ * - its bars that session are not corrupted: the bad-tick filter (H.8) cuts them no more than
+ *   maxCutsPerSession times. A corrupted symbol-session is left out whole, as if the symbol had not
+ *   traded: never ranked, and skipped in every later lookback, like an excluded session but for one name.
  *
  * Eligible names rank by opening RVOL: the volume of the first `openingRangeMinutes` minutes of D over
  * the mean of the same minutes across those same lookback sessions, floored to basis points exactly as
@@ -35,14 +38,22 @@
 import { type StoredBar, basisRatio, restatePrice, restateVolume } from "@trader/adapters";
 import type { Bar, Fixed, Ratio, SessionDate } from "@trader/contracts";
 import { fixed } from "@trader/contracts";
-import { Atr, fromNumber, ratio } from "@trader/core";
-import { type RunConfig, toRatio } from "./config.js";
+import { Atr, type BadTickConfig, countCuts, fromNumber, ratio } from "@trader/core";
+import { type RunConfig, badTickConfigFor, toRatio } from "./config.js";
 
 export interface OpeningVolume {
   readonly symbol: string;
   readonly session: SessionDate;
   /** Shares traded in the session's first minutes, as traded. */
   readonly volume: number;
+}
+
+/** A symbol-session with a bar whose high or low reaches more than 9% past its body. */
+export interface WideWickSession {
+  readonly symbol: string;
+  readonly session: SessionDate;
+  /** How many such bars. The filter can cut at most two extremes from each. */
+  readonly wideBars: number;
 }
 
 /** What the universe reads. The Timescale store in production, memory in tests. */
@@ -56,6 +67,13 @@ export interface StudySource {
   openingVolumes(month: string, minutes: number): Promise<readonly OpeningVolume[]>;
   /** The months ("2021-03") each symbol has complete minute bars for. */
   minuteMonths(): Promise<ReadonlyMap<string, ReadonlySet<string>>>;
+  /**
+   * The month's symbol-sessions with a wick more than 9% past its bar's body: the only places a
+   * bad-tick filter limited to 10% or more can cut.
+   */
+  wideWickSessions(month: string): Promise<readonly WideWickSession[]>;
+  /** One symbol's minute bars for one session, in minute order. */
+  sessionMinuteBars(symbol: string, session: SessionDate): Promise<readonly Bar[]>;
 }
 
 export interface UniverseRules {
@@ -69,6 +87,10 @@ export interface UniverseRules {
   readonly minOpeningRvol: Ratio;
   readonly topN: number;
   readonly excludeSymbols: ReadonlySet<string>;
+  /** The bad-tick filter, whose cuts decide which symbol-sessions are corrupted. Null finds none. */
+  readonly badTicks: BadTickConfig | null;
+  /** More cuts than this in a symbol-session and it is left out whole. */
+  readonly maxCutsPerSession: number;
 }
 
 export function rulesFor(config: RunConfig): UniverseRules {
@@ -84,6 +106,8 @@ export function rulesFor(config: RunConfig): UniverseRules {
     minOpeningRvol: toRatio(u.minOpeningRvol),
     topN: u.topN,
     excludeSymbols: new Set(u.excludeSymbols),
+    badTicks: badTickConfigFor(config),
+    maxCutsPerSession: config.badTicks?.maxCutsPerSession ?? 0,
   };
 }
 
@@ -112,6 +136,8 @@ export interface SessionPlan {
   readonly qualified: number;
   readonly inPlay: readonly InPlayName[];
   readonly unrankable: ReadonlyArray<{ readonly symbol: string; readonly reason: UnrankableReason }>;
+  /** Symbols left out this session as corrupted: never ranked, and never in a later lookback. */
+  readonly corrupt: readonly string[];
 }
 
 /** One session a symbol traded, as the lookback keeps it. */
@@ -171,6 +197,7 @@ export class StudyUniverse {
   #month: string | null = null;
   #daily = new Map<SessionDate, StoredBar[]>();
   #opening = new Map<SessionDate, Map<string, number>>();
+  #corrupt = new Map<SessionDate, Set<string>>();
 
   /**
    * `calendar` is every session from the start of the store through the last one to plan, oldest
@@ -235,8 +262,34 @@ export class StudyUniverse {
         row.volume,
       );
     }
+    this.#corrupt = await this.#corruptSessions(month);
     this.#month = month;
     await this.#onMonth(month);
+  }
+
+  /**
+   * The month's symbol-sessions the filter cuts more than maxCutsPerSession times. Only a session with a
+   * wide wick can be cut at all, so the exact filter runs over those alone.
+   */
+  async #corruptSessions(month: string): Promise<Map<SessionDate, Set<string>>> {
+    const corrupt = new Map<SessionDate, Set<string>>();
+    const config = this.#rules.badTicks;
+    if (config === null) {
+      return corrupt;
+    }
+    const limit = this.#rules.maxCutsPerSession;
+    for (const candidate of await this.#source.wideWickSessions(month)) {
+      if (2 * candidate.wideBars <= limit) {
+        continue;
+      }
+      const bars = await this.#source.sessionMinuteBars(candidate.symbol, candidate.session);
+      if (countCuts(bars, config) > limit) {
+        (
+          corrupt.get(candidate.session) ?? corrupt.set(candidate.session, new Set()).get(candidate.session)
+        )?.add(candidate.symbol);
+      }
+    }
+    return corrupt;
   }
 
   /** Adds one session's daily bars to every history. Bars within a symbol arrive oldest first. */
@@ -247,7 +300,12 @@ export class StudyUniverse {
     const opening = this.#opening.get(session);
     const readOpening = i >= this.#openingFrom;
     const { lookbackSessions } = this.#rules;
+    const corrupt = this.#corrupt.get(session);
     for (const raw of this.#daily.get(session) ?? []) {
+      // A corrupted day counts as a day the symbol did not trade.
+      if (corrupt?.has(raw.symbol) === true) {
+        continue;
+      }
       let history = this.#histories.get(raw.symbol);
       if (history === undefined) {
         history = { atr: new Atr(lookbackSessions), recent: [], factor: null };
@@ -271,6 +329,7 @@ export class StudyUniverse {
     const month = session.slice(0, 7);
     const today = new Map((this.#daily.get(session) ?? []).map((bar) => [bar.symbol, bar]));
     const opening = this.#opening.get(session);
+    const corrupt = this.#corrupt.get(session) ?? new Set<string>();
     const qualified: Array<Omit<InPlayName, "rank">> = [];
     const unrankable: Array<{ symbol: string; reason: UnrankableReason }> = [];
     let eligible = 0;
@@ -281,7 +340,7 @@ export class StudyUniverse {
       if (recent.length < L || oldest === undefined || oldest.index < d - rules.lookbackWindowSessions) {
         continue;
       }
-      if (rules.excludeSymbols.has(symbol)) {
+      if (rules.excludeSymbols.has(symbol) || corrupt.has(symbol)) {
         continue;
       }
       const atrToday = history.atr.value;
@@ -343,6 +402,7 @@ export class StudyUniverse {
       qualified: qualified.length,
       inPlay: qualified.slice(0, rules.topN).map((name, i) => ({ ...name, rank: i + 1 })),
       unrankable,
+      corrupt: [...corrupt].sort(bySymbol),
     };
   }
 }
