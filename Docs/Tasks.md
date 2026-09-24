@@ -515,6 +515,7 @@ the cost model. Neither alone is the proof.
 ### L.5 — Reproducibility
 - **Description:** Persist config + code/git hash + RNG seed per run; enable diff of two runs.
 - **Acceptance:** Same config+seed reproduces identical results; runs are comparable.
+- **Done:** (2026-09-24). Dirty-tree guard on by default (`--allow-dirty` recorded in the config), a data snapshot id per run beside its commit and registration sha256, byte-for-byte reproduction tested, `pnpm backtest diff`.
 - **Depends on:** L.1  **Labels:** backtest, validation  **Estimate:** 2  **Priority:** P2
 
 ### L.6 — ORB backtest realism rules

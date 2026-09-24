@@ -91,7 +91,7 @@ export async function processRun(
   const { store } = options;
   try {
     const deps = await options.dependencies();
-    const config = await store.claim(runId, deps.git, deps.registration);
+    const config = await store.claim(runId, deps.git, deps.registration, await deps.study.dataSnapshot());
     const summary = await runBacktest(config, deps, {
       onProgress: async (progress) => {
         await onProgress(progress);

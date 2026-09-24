@@ -2,8 +2,9 @@
  * Where runs are kept (migration 0005): one row per run, and under it its sessions, trades, and fills.
  *
  * A run is created "queued" with its parsed configuration, claimed "running" by exactly one worker,
- * and ends "completed" with its summary or "failed" with the error. The worker records the commit and
- * the registration it ran under at the claim, since that is the code that ran.
+ * and ends "completed" with its summary or "failed" with the error. The worker records the commit, the
+ * registration, and the data snapshot it ran under at the claim, since that is the code and the data
+ * that ran (L.5).
  *
  * Each session goes in as one transaction, so a run that dies midway leaves whole sessions behind and
  * never half of one.
@@ -14,6 +15,7 @@ import { type RunConfig, parseRunConfig } from "./config.js";
 import type { GitState } from "./guard.js";
 import type { Registration } from "./registration.js";
 import type { RunProgress, RunSummary, SessionResult } from "./run.js";
+import type { DataSnapshot } from "./universe.js";
 
 export type RunStatus = "queued" | "running" | "completed" | "failed";
 
@@ -34,6 +36,8 @@ export interface RunRow {
   readonly gitCommit: string | null;
   readonly gitDirty: boolean | null;
   readonly registrationVersion: number | null;
+  readonly registrationSha256: string | null;
+  readonly dataSnapshot: DataSnapshot | null;
   readonly progress: RunProgress | null;
   readonly summary: RunSummary | null;
   readonly error: string | null;
@@ -87,14 +91,26 @@ export class RunStore {
    * Takes a queued run for this worker and returns its configuration. Throws RunNotQueued when the run
    * does not exist or is not queued, so a job delivered twice never runs twice.
    */
-  async claim(id: string, git: GitState, registration: Registration): Promise<RunConfig> {
+  async claim(
+    id: string,
+    git: GitState,
+    registration: Registration,
+    snapshot: DataSnapshot,
+  ): Promise<RunConfig> {
     const result = await this.#pool.query<{ config: unknown }>(
       `UPDATE backtest_runs
        SET status = 'running', started_at = now(), git_commit = $2, git_dirty = $3,
-         registration_version = $4, registration_sha256 = $5
+         registration_version = $4, registration_sha256 = $5, data_snapshot = $6
        WHERE id = $1 AND status = 'queued'
        RETURNING config`,
-      [id, git.commit, git.dirty, registration.thresholds.version, registration.sha256],
+      [
+        id,
+        git.commit,
+        git.dirty,
+        registration.thresholds.version,
+        registration.sha256,
+        JSON.stringify(snapshot),
+      ],
     );
     const row = result.rows[0];
     if (row === undefined) {
@@ -210,6 +226,8 @@ export class RunStore {
       git_commit: string | null;
       git_dirty: boolean | null;
       registration_version: number | null;
+      registration_sha256: string | null;
+      data_snapshot: DataSnapshot | null;
       progress: RunProgress | null;
       summary: RunSummary | null;
       error: string | null;
@@ -217,8 +235,8 @@ export class RunStore {
       started_at: Date | null;
       finished_at: Date | null;
     }>(
-      `SELECT id, name, status, blind, config, git_commit, git_dirty, registration_version, progress,
-         summary, error, created_at, started_at, finished_at
+      `SELECT id, name, status, blind, config, git_commit, git_dirty, registration_version,
+         registration_sha256, data_snapshot, progress, summary, error, created_at, started_at, finished_at
        FROM backtest_runs ${where}`,
       values,
     );
@@ -231,6 +249,8 @@ export class RunStore {
       gitCommit: row.git_commit,
       gitDirty: row.git_dirty,
       registrationVersion: row.registration_version,
+      registrationSha256: row.registration_sha256,
+      dataSnapshot: row.data_snapshot,
       progress: row.progress,
       summary: row.summary,
       error: row.error,

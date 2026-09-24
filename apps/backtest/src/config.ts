@@ -161,6 +161,11 @@ const baseSchema = z
     seed: z.number().int(),
     /** Run everything, keep nothing after 09:35 (see run.ts). */
     blind: z.boolean().default(false),
+    /**
+     * Run from a checkout with uncommitted changes, or from none. Off by default: a run's number must come
+     * from code a commit names (guard.ts). Kept in the configuration so the run says it was let through.
+     */
+    allowDirty: z.boolean().default(false),
   })
   .strict();
 
