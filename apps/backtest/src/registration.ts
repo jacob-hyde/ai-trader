@@ -3,10 +3,11 @@
  * committed file and never a copy of its numbers.
  *
  * Two things come out of it. The thresholds are section 11's JSON block: the samples, the sessions taken
- * out of the calendar, the strategy. The frozen configuration is the holdout addendum (section 4), which
- * does not exist until the in-sample verdict is in: a ```json block anywhere in the file whose object
- * has one key, "frozenConfiguration", holding the exact run configuration the holdout runs. Until that
- * block is committed, no run may touch a holdout session (guard.ts).
+ * out of the calendar, the strategy, the statistics, and every gate. The frozen configuration is the
+ * holdout addendum (section 4), which does not exist until the in-sample verdict is in: a ```json block
+ * anywhere in the file whose object holds "frozenConfiguration", the exact run configuration the holdout
+ * runs, and "inSample", the in-sample numbers the holdout gates compare against (Amendment 6), and
+ * nothing else. Until that block is committed, no run may touch a holdout session (guard.ts).
  */
 
 import { createHash } from "node:crypto";
@@ -53,6 +54,7 @@ const thresholdsSchema = z
       openingRangeMinutes: z.number().int(),
       minOpeningRvol: z.number(),
       topN: z.number().int(),
+      topNChoices: z.array(z.number().int().positive()).min(1),
       stop: z.object({ kind: z.literal("openingRange") }),
       exits: z.array(z.object({ id: z.string() }).passthrough()).min(1),
       lastEntryMinutesBeforeClose: z.number().int(),
@@ -60,7 +62,46 @@ const thresholdsSchema = z
       maxCostToRisk: z.number(),
       excludeEtfs: z.boolean(),
     }),
-    statistics: z.object({ seed: z.number().int() }).passthrough(),
+    statistics: z.object({
+      method: z.literal("dayClusteredBootstrap"),
+      resamples: z.number().int().min(2),
+      seed: z.number().int(),
+      familyAlpha: z.number().positive().max(1),
+      correction: z.literal("holm"),
+      sided: z.literal("one"),
+    }),
+    inSampleGates: z.object({
+      minTrades: z.number().int().positive(),
+      minPositiveYears: z.number().int().positive(),
+      years: z.number().int().positive(),
+      leaveOneYearOutPositive: z.boolean(),
+      excludedRegimeYears: z.array(z.number().int()),
+      excludedRegimeMeanPositive: z.boolean(),
+    }),
+    holdoutGates: z.object({ meanPositive: z.literal(true), notWorseZ: z.number().positive() }),
+    live: z
+      .object({
+        aggressivePosture: z.object({
+          riskPerTrade: z.number().positive(),
+          maxPositionPct: z.number().positive(),
+          maxConcurrent: z.number().int().positive(),
+          dailyLossLimit: z.number().positive(),
+        }),
+      })
+      .passthrough(),
+    // The as-deployed diagnostic's account beyond the aggressive posture (section 7, Amendment 6).
+    asDeployed: z.object({
+      startingCash: z.number().positive(),
+      maxGrossExposure: z.number().positive(),
+      maxOpenRisk: z.number().positive(),
+      flattenOnBreaker: z.boolean(),
+    }),
+    // Section 7's cost multiples, RVOL buckets, and the break-even search's ceiling (Amendment 6).
+    diagnostics: z.object({
+      costScales: z.array(z.number().positive()).min(1),
+      rvolBuckets: z.array(z.tuple([z.number().int().positive(), z.number().int().positive()])).min(1),
+      breakEvenMaxBps: z.number().int().positive(),
+    }),
     // What a passing null model is (Amendment 5). The gate's code is held to it by a test.
     nullModel: z.object({
       paths: z.number().int().positive(),
@@ -75,10 +116,27 @@ const thresholdsSchema = z
 
 export type Thresholds = z.infer<typeof thresholdsSchema>;
 
+/** The in-sample numbers the holdout addendum carries beside the frozen configuration. */
+const inSampleSchema = z
+  .object({
+    runId: z.string().uuid(),
+    commit: z.string().regex(/^[0-9a-f]{40}$/),
+    exit: z.string().min(1),
+    topN: z.number().int().positive(),
+    trades: z.number().int().positive(),
+    /** In R. */
+    netMeanR: z.number(),
+  })
+  .strict();
+
+export type FrozenInSample = z.infer<typeof inSampleSchema>;
+
 export interface Registration {
   readonly thresholds: Thresholds;
   /** The holdout's configuration once the addendum is committed, else null. */
   readonly frozen: RunConfig | null;
+  /** The in-sample numbers committed with it, else null. */
+  readonly frozenInSample: FrozenInSample | null;
   /** Of the whole file, so a run records exactly which text it ran under. */
   readonly sha256: string;
   /** The frozen ETF and ETN exclusion list, or null before it exists. */
@@ -143,22 +201,33 @@ export function parseRegistration(markdown: string): Registration {
     throw new RegistrationError("more than one frozen configuration; the holdout runs once, on one");
   }
   let frozen: RunConfig | null = null;
-  const addendum = addenda[0];
+  let frozenInSample: FrozenInSample | null = null;
+  const addendum = addenda[0] as Record<string, unknown> | undefined;
   if (addendum !== undefined) {
-    if (Object.keys(addendum).length !== 1) {
+    if (Object.keys(addendum).some((key) => key !== "frozenConfiguration" && key !== "inSample")) {
       throw new RegistrationError(
-        'the frozen configuration block holds "frozenConfiguration" and nothing else',
+        'the frozen configuration block holds "frozenConfiguration" and "inSample" and nothing else',
       );
     }
     try {
-      frozen = parseRunConfig(addendum.frozenConfiguration);
+      frozen = parseRunConfig(addendum["frozenConfiguration"]);
     } catch (error) {
       throw new RegistrationError(`frozen configuration: ${(error as Error).message}`);
+    }
+    if (addendum["inSample"] !== undefined) {
+      const inSample = inSampleSchema.safeParse(addendum["inSample"]);
+      if (!inSample.success) {
+        throw new RegistrationError(
+          `frozen in-sample numbers: ${inSample.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`,
+        );
+      }
+      frozenInSample = inSample.data;
     }
   }
   return {
     thresholds: parsed.data,
     frozen,
+    frozenInSample,
     sha256: createHash("sha256").update(markdown).digest("hex"),
     etfExclusions: null,
   };

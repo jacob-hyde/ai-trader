@@ -11,7 +11,12 @@ import { DEFAULT_PATH_CONFIG, type Scenario, generatePath } from "@trader/core";
 import { DEFAULT_BAD_TICKS, type RunConfig, type RunConfigInput, parseRunConfig } from "./config.js";
 import type { GitState } from "./guard.js";
 import { MemoryStudySource } from "./memory.js";
-import { REGISTRATION_PATH, type Registration, parseRegistration } from "./registration.js";
+import {
+  type FrozenInSample,
+  REGISTRATION_PATH,
+  type Registration,
+  parseRegistration,
+} from "./registration.js";
 import type { RunDependencies } from "./run.js";
 
 /** Dollars to units. */
@@ -135,6 +140,7 @@ export function registrationFor(options: {
   readonly holdoutFrom: string;
   readonly excluded?: readonly string[];
   readonly frozen?: RunConfig | null;
+  readonly frozenInSample?: FrozenInSample | null;
 }): Registration {
   const real = parseRegistration(readFileSync(REGISTRATION_PATH, "utf8"));
   return {
@@ -148,6 +154,7 @@ export function registrationFor(options: {
       },
     },
     frozen: options.frozen ?? null,
+    frozenInSample: options.frozenInSample ?? null,
   };
 }
 
