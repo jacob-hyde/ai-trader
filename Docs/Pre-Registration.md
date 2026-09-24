@@ -28,8 +28,8 @@ This matters because the in-sample period overlaps data already looked at. The f
 4. **The signal-time feasibility check in section 8**, on 2017-01-03 to 2017-05-31. It used bars up
    to 09:35 only: which names ranked in play, their opening range, and whether each stop passed the
    cost gate. No bar after the signal was read.
-5. **The L.1 blind runs (2026-09-23)**, over the whole in-sample period. Signal-time counts only; the
-   numbers are in Amendment 2.
+5. **The L.1 blind runs (2026-09-23 and 2026-09-24)**, over the whole in-sample period. Signal-time
+   counts only; the numbers are in Amendments 2, 3, and 4.
 6. Synthetic data only, everywhere else (goldens, invariants, null model).
 
 ## 2. Hypotheses
@@ -453,6 +453,33 @@ symbol-session, and the signal-time counts barely moved: 39,175 signals as befor
 passes of 19,708 (A) and 19,707 (B), one fewer each.
 
 Section 11 carries the thresholds as `samples.badTicks`, and its version is now 3.
+
+### Amendment 4 (2026-09-24): the ETF and ETN exclusion list
+
+The list section 3 requires is built and committed as `Docs/ETF-ETN-Exclusions.txt`, dated 2026-09-24,
+before any L.2 run. It is never changed after the first one. Its header records the method and every
+hand decision; this is the summary.
+
+**What it covers.** Every symbol with minute bars loaded, 6,256 of them, since only those can rank in
+play. Names come from Alpaca's asset list, and for a symbol the list no longer carries, from Alpaca's
+single-asset lookup, which still knows many delisted products. 293 symbols no source names; reviewed one
+by one, seven of them are products (BWV, CETH, FNGB, PHB, SATG, SPLG, XXXX) and the rest are companies,
+SPACs, warrants, ADRs, and preferreds.
+
+**The match and the review.** The keywords and issuers match 995 names. Seven are kept in: the issuers'
+own stock and banks (AMPY, BCS, CS, DB, IVR, IVZ, WT). Closed-end funds go with the ETFs, since the
+keyword "Fund" catches most of them, and the six that carry no keyword (BDJ, BIGZ, BTX, BTZ, CSQ, GDV) are
+added. REITs, royalty trusts, bank preferreds, ADRs, and BDCs not named Fund stay in. 1,001 entries in all.
+
+**Reused tickers.** Section 3 speaks of a list of symbols, but the store is ticker-at-time, and 53 tickers
+a fund holds today belonged to a company first: FB was Facebook until 2022, LQ La Quinta, NFX Newfield.
+Excluding the symbol outright would take those companies out of the study. So an entry can carry a date,
+and such a ticker is excluded only from the first session of its fund era. Five tickers were products in
+both eras (UGLD, USLV, MLPI, MEME, PCI) and are excluded whole.
+
+**What it changes at signal time.** A blind in-sample run with the list (nothing kept after 09:35):
+eligible names fall from 827 to 723 a session, with 39,241 signals and range-low gate passes of 20,802 (A)
+and 20,801 (B). Nothing after 09:35 was seen, and the list was built from names alone.
 
 ## 13. Known limitations
 
