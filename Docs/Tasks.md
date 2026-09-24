@@ -504,6 +504,7 @@ the cost model. Neither alone is the proof.
 ### L.3 — Null-model run + report
 - **Description:** Surface D.4 as a first-class, repeatable report.
 - **Acceptance:** One command/report shows the tripwire result on the latest code.
+- **Done:** `pnpm backtest null-model` (2026-09-24). Runs D.4's standing tripwire for both confirmatory exits (EOD, and 2R with breakeven at 1R) at 100,000 paths and keeps the verdict against the commit; `pnpm backtest status` shows it next to every run from that commit. The required step is in the README's backtest section.
 - **Depends on:** D.4  **Labels:** validation  **Estimate:** 2  **Priority:** P1
 
 ### L.4 — Results metrics

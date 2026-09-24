@@ -8,9 +8,14 @@
  *   pnpm backtest status [<run id>]                  recent runs, or one of them
  *   pnpm backtest config preregistered [--blind]
  *                                                    prints the pre-registered in-sample configuration
+ *   pnpm backtest null-model                         runs the null-model tripwire on this checkout and
+ *                                                    records it against the commit (nullModel.ts)
  *
  * A path is taken relative to where pnpm was run. DATABASE_URL (the engine role) is always needed,
  * REDIS_URL for worker and submit.
+ *
+ * Every run shown with a commit also shows the null model's verdict on that commit. No number from a run
+ * is read until it says pass.
  *
  * A blind run prints what was known by 09:35 and its timing, and nothing else: no trade, fill, trigger
  * count, or R reaches the terminal or the database (run.ts).
@@ -18,12 +23,20 @@
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { NULL_MODEL_EXITS, NULL_MODEL_GATE_PATHS, formatNullModelReport } from "@trader/core";
 import { TimescaleReplaySource } from "@trader/data/replay";
 import { QueueEvents } from "bullmq";
 import { config as loadDotenv } from "dotenv";
 import pg from "pg";
 import { type RunConfig, parseRunConfig } from "./config.js";
 import { readGit } from "./git.js";
+import {
+  NULL_MODEL_EXIT_IDS,
+  NullModelStore,
+  type NullModelStanding,
+  nullModelStanding,
+  runNullModelGate,
+} from "./nullModel.js";
 import { preregisteredConfig } from "./preregistered.js";
 import {
   type BacktestJobResult,
@@ -120,16 +133,42 @@ function printSummary(summary: RunSummary): void {
   }
 }
 
-function printRow(row: RunRow): void {
+function printRow(row: RunRow, standing: NullModelStanding | null): void {
   console.log(
     `${row.id}  ${row.status.padEnd(9)} ${row.blind ? "blind " : ""}${row.name}` +
-      `  (created ${row.createdAt.toISOString()}${row.gitCommit === null ? "" : `, commit ${row.gitCommit.slice(0, 8)}${row.gitDirty ? "+dirty" : ""}`})`,
+      `  (created ${row.createdAt.toISOString()}${row.gitCommit === null ? "" : `, commit ${row.gitCommit.slice(0, 8)}${row.gitDirty ? "+dirty" : ""}`}` +
+      `${standing === null ? "" : `, ${standing.short}`})`,
   );
   if (row.progress !== null && row.status === "running") {
     console.log(`  ${describeProgress(row.progress)}`);
   }
   if (row.error !== null) {
     console.log(`  ${row.error.split("\n")[0] ?? ""}`);
+  }
+}
+
+/** The null model's standing for each run, from one query. */
+async function standings(
+  pool: pg.Pool,
+  rows: readonly RunRow[],
+): Promise<ReadonlyMap<string, NullModelStanding | null>> {
+  const latest = await new NullModelStore(pool).latestFor(
+    rows.flatMap((row) => (row.gitCommit === null ? [] : [row.gitCommit])),
+  );
+  return new Map(rows.map((row) => [row.id, nullModelStanding(row, latest.get(row.gitCommit ?? ""))]));
+}
+
+/** A run's summary if it has one, then the null model on its commit, which says whether any of it can be read. */
+async function printResult(pool: pg.Pool, row: RunRow | null): Promise<void> {
+  if (row === null) {
+    return;
+  }
+  if (row.summary !== null) {
+    printSummary(row.summary);
+  }
+  const standing = (await standings(pool, [row])).get(row.id);
+  if (standing != null) {
+    console.log(standing.line);
   }
 }
 
@@ -200,10 +239,7 @@ async function submit(): Promise<void> {
         process.exitCode = 1;
         return;
       }
-      const row = await store.get(String(job.id));
-      if (row?.summary != null) {
-        printSummary(row.summary);
-      }
+      await printResult(pool, await store.get(String(job.id)));
     } finally {
       await events.close();
       await queue.close();
@@ -229,10 +265,7 @@ async function runHere(): Promise<void> {
       process.exitCode = 1;
       return;
     }
-    const row = await store.get(result.runId);
-    if (row?.summary != null) {
-      printSummary(row.summary);
-    }
+    await printResult(pool, await store.get(result.runId));
   });
 }
 
@@ -241,8 +274,10 @@ async function status(): Promise<void> {
     const store = new RunStore(pool);
     const id = positional[0];
     if (id === undefined) {
-      for (const row of await store.list()) {
-        printRow(row);
+      const rows = await store.list();
+      const standing = await standings(pool, rows);
+      for (const row of rows) {
+        printRow(row, standing.get(row.id) ?? null);
       }
       return;
     }
@@ -250,10 +285,8 @@ async function status(): Promise<void> {
     if (row === null) {
       throw new Error(`no run ${id}`);
     }
-    printRow(row);
-    if (row.summary !== null) {
-      printSummary(row.summary);
-    }
+    printRow(row, null);
+    await printResult(pool, row);
   });
 }
 
@@ -265,11 +298,55 @@ async function config(): Promise<void> {
   console.log(JSON.stringify(preregisteredConfig(registration, { blind: flags.has("--blind") }), null, 2));
 }
 
-const commands: Record<string, () => Promise<void>> = { worker, submit, run: runHere, status, config };
+function describeExit(exit: (typeof NULL_MODEL_EXITS)[keyof typeof NULL_MODEL_EXITS]): string {
+  return exit.kind === "eod"
+    ? "flatten at the end of the day"
+    : `${String(exit.targetR)}R target, breakeven at ${String(exit.breakevenAtR)}R`;
+}
+
+async function nullModel(): Promise<void> {
+  const git = await readGit();
+  await withPool(async (pool) => {
+    const store = new NullModelStore(pool);
+    await store.ready();
+    const on =
+      git.commit === null ? "no commit" : `commit ${git.commit.slice(0, 8)}${git.dirty ? "+dirty" : ""}`;
+    console.log(
+      `null model on ${on}: ${NULL_MODEL_GATE_PATHS.toLocaleString()} driftless sessions for each of exits ${NULL_MODEL_EXIT_IDS.join(" and ")}`,
+    );
+    if (git.commit === null || git.dirty) {
+      console.log(
+        git.commit === null
+          ? "not a git checkout: this run is recorded and counts for nothing"
+          : "the checkout has uncommitted changes: this run is recorded and counts for no commit",
+      );
+    }
+    const result = await runNullModelGate(NULL_MODEL_GATE_PATHS, {
+      onStart: (exit) => console.log(`\nexit ${exit}, ${describeExit(NULL_MODEL_EXITS[exit])}:`),
+      onReport: (_, report) => console.log(formatNullModelReport(report)),
+    });
+    const row = await store.record(git, result);
+    console.log(
+      `\nnull model: ${result.verdict.toUpperCase()} over every exit, ${seconds(result.elapsedMs)}, recorded as ${row.id}`,
+    );
+    if (result.verdict !== "pass") {
+      process.exitCode = 1;
+    }
+  });
+}
+
+const commands: Record<string, () => Promise<void>> = {
+  worker,
+  submit,
+  run: runHere,
+  status,
+  config,
+  "null-model": nullModel,
+};
 const chosen = commands[command];
 if (chosen === undefined) {
   console.log(
-    "usage: pnpm backtest worker | submit <config.json> | run <config.json> | status [<run id>] | config preregistered",
+    "usage: pnpm backtest worker | submit <config.json> | run <config.json> | status [<run id>] | config preregistered | null-model",
   );
   process.exitCode = 1;
 } else {

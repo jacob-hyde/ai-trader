@@ -1,50 +1,29 @@
 import { describe, expect, it } from "vitest";
 import type { Bar } from "./bars.js";
-import { DEFAULT_COST_TO_RISK } from "./costToRisk.js";
 import { DEFAULT_COST_MODEL } from "./costs.js";
-import { fixed, ratio } from "./money.js";
+import { ratio } from "./money.js";
 import {
   MIN_TRADES,
+  NULL_MODEL_EXITS,
+  NULL_MODEL_GATE_PATHS,
   NullModelError,
+  type NullModelReport,
+  combinedVerdict,
   formatNullModelReport,
   runNullModel,
+  standingNullModel,
   statistics,
   verdictFor,
-  type NullModelConfig,
   type RStatistics,
 } from "./nullModel.js";
-import { DEFAULT_PATH_CONFIG } from "./paths.js";
-import { DEFAULT_RISK_CONFIG } from "./riskRules.js";
 import type { TradePlan } from "./setup.js";
 import { simulateTrade } from "./tradeSim.js";
 
 /** Paths per run: a few thousand on every push, far more nightly. About one second per thousand. */
 export const NULL_MODEL_PATHS = Number(process.env["NULL_MODEL_PATHS"] ?? 5_000);
 
-/**
- * The standing configuration. A volatile $20 name, one price move a second, the range-low stop
- * because the published 10% ATR stop never clears the cost gate on any path, and the production
- * cost model and gate. Every session decides alone against $100,000.
- */
-export const NULL_MODEL_CONFIG: NullModelConfig = {
-  paths: NULL_MODEL_PATHS,
-  firstSeed: 1,
-  path: { ...DEFAULT_PATH_CONFIG, startPrice: fixed(200_000), volatilityBps: 70, stepsPerBar: 60 },
-  setupParams: { stop: { kind: "openingRange" } },
-  decision: {
-    costModel: DEFAULT_COST_MODEL,
-    costToRisk: DEFAULT_COST_TO_RISK,
-    sizing: { riskPerTrade: ratio(100), maxPositionPct: ratio(2_500), regime: { kind: "proven" } },
-    risk: DEFAULT_RISK_CONFIG,
-  },
-  equity: fixed(1_000_000_000),
-  dailyAtrOfPrice: ratio(500),
-  openingRvol: ratio(20_000),
-  flattenMinute: 380,
-  // Correct code lands within a hundredth of an R of zero gross. Two hundredths leaves room for that
-  // and still catches a leak worth a tenth of an R once the nightly run has the power to see it.
-  grossToleranceR: 0.02,
-};
+/** The standing configuration on the EOD exit, at this run's scale. */
+const NULL_MODEL_CONFIG = standingNullModel("A", NULL_MODEL_PATHS);
 
 const stats = (count: number, meanR: number, halfWidth: number): RStatistics => ({
   count,
@@ -90,6 +69,33 @@ describe("the null-model tripwire on correct code", () => {
     const again = runNullModel({ ...NULL_MODEL_CONFIG, paths: 300 });
     expect(runNullModel({ ...NULL_MODEL_CONFIG, paths: 300 })).toEqual(again);
     expect(runNullModel({ ...NULL_MODEL_CONFIG, paths: 300, firstSeed: 7 }).gross).not.toEqual(again.gross);
+  });
+});
+
+describe("the null-model tripwire on the 2R exit with breakeven at 1R", () => {
+  const report = runNullModel(standingNullModel("B", NULL_MODEL_PATHS));
+
+  it("passes: no established gross edge, and every fill charged", () => {
+    expect(report.verdict, formatNullModelReport(report)).toBe("pass");
+    expect(report.reasons).toEqual([]);
+  });
+
+  it("decides the same trades as the EOD exit on the same paths, since the exit comes after every decision", () => {
+    const eod = runNullModel({ ...NULL_MODEL_CONFIG, paths: 500 });
+    const target = runNullModel({ ...standingNullModel("B"), paths: 500 });
+    expect([target.signals, target.refused, target.trades, target.unfilled]).toEqual([
+      eod.signals,
+      eod.refused,
+      eod.trades,
+      eod.unfilled,
+    ]);
+  });
+
+  it("exercises its own exits: the target, the breakeven stop, and the stop", () => {
+    expect(report.exits.target).toBeGreaterThan(0);
+    expect(report.exits.breakevenStop).toBeGreaterThan(0);
+    expect(report.exits.stop).toBeGreaterThan(report.exits.target);
+    expect(report.dragR).toBeGreaterThan(0.05);
   });
 });
 
@@ -172,6 +178,38 @@ describe("verdictFor", () => {
 
   it("lists both reasons when both apply", () => {
     expect(verdictFor(stats(1_000, 0.5, 0.1), 0, 0.05).reasons).toHaveLength(2);
+  });
+});
+
+describe("the standing configuration", () => {
+  it("runs the registration's confirmatory exits at gate scale unless told otherwise", () => {
+    expect(Object.keys(NULL_MODEL_EXITS)).toEqual(["A", "B"]);
+    const gate = standingNullModel("B");
+    expect(gate.paths).toBe(NULL_MODEL_GATE_PATHS);
+    expect(gate.setupParams).toEqual({
+      stop: { kind: "openingRange" },
+      exit: { kind: "fixedR", targetR: 2, breakevenAtR: 1 },
+    });
+    expect(standingNullModel("A", 40).paths).toBe(40);
+    expect(gate.leak).toBeUndefined();
+  });
+});
+
+describe("combinedVerdict", () => {
+  const withVerdict = (verdict: NullModelReport["verdict"]) => ({ verdict }) as NullModelReport;
+
+  it("fails if any run failed, whatever the others say", () => {
+    expect(combinedVerdict([withVerdict("pass"), withVerdict("fail")])).toBe("fail");
+    expect(combinedVerdict([withVerdict("insufficient"), withVerdict("fail")])).toBe("fail");
+  });
+
+  it("is insufficient if any run was, or if there are none", () => {
+    expect(combinedVerdict([withVerdict("pass"), withVerdict("insufficient")])).toBe("insufficient");
+    expect(combinedVerdict([])).toBe("insufficient");
+  });
+
+  it("passes only when every run passed", () => {
+    expect(combinedVerdict([withVerdict("pass"), withVerdict("pass")])).toBe("pass");
   });
 });
 
