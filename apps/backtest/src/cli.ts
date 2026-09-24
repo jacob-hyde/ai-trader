@@ -16,6 +16,10 @@
  *   pnpm backtest l2 in-sample                       the pre-registered in-sample run, its verdict, section 7
  *   pnpm backtest l2 verdict <run id>                that verdict again for a run, from what it kept
  *   pnpm backtest l2 holdout                         the frozen configuration on the holdout, once
+ *   pnpm backtest gapfade signals [--from d] [--to d]
+ *                                                    study 2.1's signal-time data: pre-market prices by
+ *                                                    09:25 and overnight news of the gappers, with counts
+ *   pnpm backtest gapfade run                        study 2.1 in-sample, once its section is committed
  *   pnpm backtest costs <run id> [--per-year n] [--seed s]
  *                                                    prices a sample of a finished run's trades from
  *                                                    the market's trades and quotes (costCheck.ts)
@@ -56,6 +60,10 @@ import {
   summarize,
 } from "./costCheck.js";
 import { LATENCY_MS } from "./fills.js";
+import { runGapFadeInSample } from "./gapFade/run.js";
+import { type Gapper, loadSignals } from "./gapFade/signals.js";
+import { renderGapFade, withheld } from "./gapFade/text.js";
+import { ROUND2_PATH, gapFadeSpec, loadRound2 } from "./round2.js";
 import { diffRuns } from "./diff.js";
 import { fileInCommit, readGit } from "./git.js";
 import type { GitState } from "./guard.js";
@@ -99,7 +107,7 @@ loadDotenv({ path: path.join(REPO_ROOT, ".env") });
 const [command = "", ...rest] = process.argv.slice(2);
 const flags = new Set(rest.filter((arg) => arg.startsWith("--")));
 const positional = rest.filter(
-  (arg, i) => !arg.startsWith("--") && !rest[i - 1]?.match(/^--(concurrency|per-year|seed)$/),
+  (arg, i) => !arg.startsWith("--") && !rest[i - 1]?.match(/^--(concurrency|per-year|seed|from|to)$/),
 );
 
 function option(name: string): string | undefined {
@@ -590,6 +598,148 @@ function dataClient(): AlpacaClient {
   });
 }
 
+interface GapTally {
+  sessions: number;
+  eligible: number;
+  up: number[];
+  upQuiet: number[];
+  quietDays: number[];
+  down: number[];
+  downQuiet: number[];
+}
+
+/** Signal-time counts only: how many names gapped, by how much, with and without news. No returns. */
+async function gapfadeRun(): Promise<void> {
+  const round2 = await loadRound2();
+  const spec = gapFadeSpec(round2);
+  const git = await readGit();
+  if (git.commit === null || git.dirty) {
+    throw new Error("a registered study runs only from a clean checkout, so its result names its code");
+  }
+  if (!(await fileInCommit(git.commit, path.relative(REPO_ROOT, ROUND2_PATH)))) {
+    throw new Error("the Round 2 registration is not in this commit");
+  }
+  const registration = await loadRegistration();
+  const alpaca = dataClient();
+  try {
+    await withPool(async (pool) => {
+      const run = await runGapFadeInSample({
+        alpaca,
+        pool,
+        study: new TimescaleStudySource(pool),
+        registration,
+        round2,
+        spec,
+        git,
+        onProgress: (message) => console.log(message),
+      });
+      const text = renderGapFade(run, spec, round2.round, {
+        commit: git.commit,
+        registration: round2.sha256,
+      });
+      const report = {
+        spec,
+        result: run.result,
+        withheld: withheld(run, round2.round),
+        restricted: run.restricted,
+      };
+      await pool.query("UPDATE study_runs SET report = $2, text = $3, finished_at = now() WHERE id = $1", [
+        run.id,
+        JSON.stringify(report),
+        text,
+      ]);
+      console.log(text);
+    });
+  } finally {
+    await alpaca.close();
+  }
+}
+
+async function gapfade(): Promise<void> {
+  if (positional[0] === "run") {
+    await gapfadeRun();
+    return;
+  }
+  if (positional[0] !== "signals") {
+    throw new Error("gapfade takes: signals | run");
+  }
+  const registration = await loadRegistration();
+  const from = option("from") ?? registration.thresholds.samples.inSample.firstTradable;
+  const to = option("to") ?? registration.thresholds.samples.inSample.to;
+  if (to >= registration.thresholds.samples.holdout.from) {
+    throw new Error("the holdout's signal-time data is read only when its study's holdout runs");
+  }
+  const alpaca = dataClient();
+  const gaps = [0.02, 0.03, 0.05];
+  const years = new Map<string, GapTally>();
+  const started = Date.now();
+  const add = (list: number[], i: number, n: number) => {
+    list[i] = (list[i] ?? 0) + n;
+  };
+  try {
+    await withPool(async (pool) => {
+      await loadSignals({
+        alpaca,
+        pool,
+        study: new TimescaleStudySource(pool),
+        registration,
+        from,
+        to,
+        newsGap: Math.min(...gaps),
+        onSession: (session, eligible, gappers: readonly Gapper[]) => {
+          const year = session.slice(0, 4);
+          const zeros = () => gaps.map(() => 0);
+          const t: GapTally = years.get(year) ?? {
+            sessions: 0,
+            eligible: 0,
+            up: zeros(),
+            upQuiet: zeros(),
+            quietDays: zeros(),
+            down: zeros(),
+            downQuiet: zeros(),
+          };
+          years.set(year, t);
+          t.sessions += 1;
+          t.eligible += eligible;
+          gaps.forEach((g, i) => {
+            const ups = gappers.filter((x) => x.gap >= g);
+            const quiet = ups.filter((x) => x.news === 0);
+            const downs = gappers.filter((x) => x.gap <= -g);
+            add(t.up, i, ups.length);
+            add(t.upQuiet, i, quiet.length);
+            add(t.quietDays, i, quiet.length > 0 ? 1 : 0);
+            add(t.down, i, downs.length);
+            add(t.downQuiet, i, downs.filter((x) => x.news === 0).length);
+          });
+          if (t.sessions % 21 === 1) {
+            const minutes = ((Date.now() - started) / 60_000).toFixed(1);
+            console.log(
+              `${session}: ${String(eligible)} eligible, ${String(gappers.length)} moved 2%+ (${minutes} min)`,
+            );
+          }
+        },
+      });
+    });
+  } finally {
+    await alpaca.close();
+  }
+  const pct = (g: number) => `${String(g * 100)}%`;
+  console.log(
+    "\nPer session, by the gap at 09:25 against the prior close. Quiet: no article in the overnight window.",
+  );
+  console.log(
+    `| Year | Sessions | Eligible | ${gaps.map((g) => `Up ${pct(g)}: all / quiet / days`).join(" | ")} | ${gaps.map((g) => `Down ${pct(g)}: all / quiet`).join(" | ")} |`,
+  );
+  for (const [year, t] of [...years].sort(([a], [b]) => (a < b ? -1 : 1))) {
+    const per = (n: number | undefined) => ((n ?? 0) / t.sessions).toFixed(1);
+    const ups = gaps.map((_, i) => `${per(t.up[i])} / ${per(t.upQuiet[i])} / ${String(t.quietDays[i] ?? 0)}`);
+    const downs = gaps.map((_, i) => `${per(t.down[i])} / ${per(t.downQuiet[i])}`);
+    console.log(
+      `| ${year} | ${String(t.sessions)} | ${per(t.eligible)} | ${ups.join(" | ")} | ${downs.join(" | ")} |`,
+    );
+  }
+}
+
 const COST_REPORT = "costs";
 
 async function costs(): Promise<void> {
@@ -665,11 +815,12 @@ const commands: Record<string, () => Promise<void>> = {
   "null-model": nullModel,
   l2,
   costs,
+  gapfade,
 };
 const chosen = commands[command];
 if (chosen === undefined) {
   console.log(
-    "usage: pnpm backtest worker | submit <config.json> | run <config.json> | status [<run id>] | diff <a> <b> | report <run id> | config preregistered | null-model | l2 in-sample | l2 verdict <run id> | l2 holdout | costs <run id>",
+    "usage: pnpm backtest worker | submit <config.json> | run <config.json> | status [<run id>] | diff <a> <b> | report <run id> | config preregistered | null-model | l2 in-sample | l2 verdict <run id> | l2 holdout | costs <run id> | gapfade signals | gapfade run",
   );
   process.exitCode = 1;
 } else {
