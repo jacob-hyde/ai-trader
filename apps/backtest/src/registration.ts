@@ -61,6 +61,15 @@ const thresholdsSchema = z
       excludeEtfs: z.boolean(),
     }),
     statistics: z.object({ seed: z.number().int() }).passthrough(),
+    // What a passing null model is (Amendment 5). The gate's code is held to it by a test.
+    nullModel: z.object({
+      paths: z.number().int().positive(),
+      firstSeed: z.number().int(),
+      exits: z.array(z.string()).min(1),
+      minTrades: z.number().int().positive(),
+      grossToleranceR: z.number().nonnegative(),
+      cleanCheckout: z.literal(true),
+    }),
   })
   .passthrough();
 
