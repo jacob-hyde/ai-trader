@@ -48,12 +48,30 @@ pnpm backtest worker                            # takes queued runs until stoppe
 pnpm backtest submit run.json                   # queues a run and follows its progress to the end
 pnpm backtest run run.json                      # the same run here, without Redis
 pnpm backtest status [<run id>]
+pnpm backtest null-model                        # the null-model tripwire on this checkout, kept against the commit
 ```
 
 Every run takes the pre-registration's excluded sessions out of its calendar, and refuses holdout sessions
 until a frozen configuration is committed to `Docs/Pre-Registration.md`. The bad-tick filter (H.8) judges
 every minute bar before the simulated broker sees it; `badTicks: null` in a configuration turns it off. `--blind` runs everything and keeps
 nothing after 09:35: timing and signal-time counts only, no trade, fill, or R.
+
+### Before reading any backtest number
+
+A number is read only when the pre-registration's preconditions (section 3) hold for the commit that
+produced it. On a clean checkout of that commit:
+
+1. `pnpm bars verify` shows no unexplained holes in the months the run uses.
+2. `pnpm bars suspects` has scanned every month since it was loaded. A run refuses a month loaded after
+   its scan.
+3. `Docs/ETF-ETN-Exclusions.txt` is committed. `pnpm backtest config preregistered` refuses to build
+   without it.
+4. `pnpm backtest null-model` passes. It runs the D.4 tripwire over 100,000 driftless sessions for each
+   confirmatory exit, about three minutes, and keeps the verdict against the commit. Run from a dirty
+   checkout it is kept and counts for nothing.
+
+`pnpm backtest status` shows the null model's verdict on each run's commit. FAIL voids every number from
+that commit (pre-registration section 10). NOT RUN means run it before looking.
 
 ## Modes
 

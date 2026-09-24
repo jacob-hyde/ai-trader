@@ -5,7 +5,7 @@
  * expected gross result on it. The simulator's intrabar rules only make that worse. So a correct system
  * must land at about zero gross and clearly negative net, the cost drag. Profit on random data is a
  * defect: a look-ahead leak, an accounting error, or a fit to noise. Is a standing check, run on every
- * push at a modest size and nightly at full size, and the report L.3 surfaces.
+ * push at a modest size and nightly at full size, and the gate L.3 runs before any L.2 number is read.
  *
  * Each path is one session for one symbol. The ORB signals on its range, the entry goes through the
  * cost gate, sizing, the risk rules, and the bracket builder, and the approved trade is simulated to
@@ -32,11 +32,13 @@
  */
 
 import type { Bar } from "./bars.js";
+import { DEFAULT_COST_TO_RISK } from "./costToRisk.js";
+import { DEFAULT_COST_MODEL } from "./costs.js";
 import { type DecisionConfig, decideEntry } from "./decision.js";
-import { type Fixed, type Ratio, fixed } from "./money.js";
+import { type Fixed, type Ratio, fixed, ratio } from "./money.js";
 import { orbSetupDefinition } from "./orb.js";
-import { type PathConfig, generatePath } from "./paths.js";
-import { BREAKER_ARMED } from "./riskRules.js";
+import { DEFAULT_PATH_CONFIG, type PathConfig, generatePath } from "./paths.js";
+import { BREAKER_ARMED, DEFAULT_RISK_CONFIG } from "./riskRules.js";
 import { type SetupSignal, type SymbolState, type TradePlan, loadSetup, planTrade } from "./setup.js";
 import { type FilledTrade, simulateTrade } from "./tradeSim.js";
 
@@ -114,6 +116,61 @@ export class NullModelError extends Error {
 
 /** Fewer trades than this and the interval means nothing, so the verdict is "insufficient", not "pass". */
 export const MIN_TRADES = 200;
+
+/**
+ * The pre-registration's two confirmatory exits (section 3), the ones an L.2 number is read from. The gate
+ * runs the standing model once for each, on the same paths. A target fills at its limit and a breakeven
+ * stop moves mid-trade, so the 2R exit has fill rules of its own that the EOD exit never reaches.
+ */
+export const NULL_MODEL_EXITS = {
+  A: { kind: "eod" },
+  B: { kind: "fixedR", targetR: 2, breakevenAtR: 1 },
+} as const;
+
+export type NullModelExit = keyof typeof NULL_MODEL_EXITS;
+
+/** Paths in a gate run. The nightly scale, the smallest that sees a leak of about a tenth of an R. */
+export const NULL_MODEL_GATE_PATHS = 100_000;
+
+/**
+ * The standing configuration, for one confirmatory exit.
+ *
+ * A volatile $20 name, one price move a second, the range-low stop because the published 10% ATR stop
+ * never clears the cost gate on any path, and the production cost model and gate. Every session decides
+ * alone against $100,000. Entries stop 30 minutes and positions flatten 10 minutes before a full day's
+ * close, as registered.
+ */
+export function standingNullModel(exit: NullModelExit, paths = NULL_MODEL_GATE_PATHS): NullModelConfig {
+  return {
+    paths,
+    firstSeed: 1,
+    path: { ...DEFAULT_PATH_CONFIG, startPrice: fixed(200_000), volatilityBps: 70, stepsPerBar: 60 },
+    setupParams: { stop: { kind: "openingRange" }, exit: NULL_MODEL_EXITS[exit] },
+    decision: {
+      costModel: DEFAULT_COST_MODEL,
+      costToRisk: DEFAULT_COST_TO_RISK,
+      sizing: { riskPerTrade: ratio(100), maxPositionPct: ratio(2_500), regime: { kind: "proven" } },
+      risk: DEFAULT_RISK_CONFIG,
+    },
+    equity: fixed(1_000_000_000),
+    dailyAtrOfPrice: ratio(500),
+    openingRvol: ratio(20_000),
+    flattenMinute: 380,
+    // Correct code lands at or a little under zero gross, since the fill rules lean against the trade.
+    // Two hundredths leaves room for that and still catches a leak worth a tenth of an R at gate scale.
+    grossToleranceR: 0.02,
+  };
+}
+
+/** One verdict over several runs: fail if any failed, else insufficient if any was or there are none. */
+export function combinedVerdict(reports: readonly NullModelReport[]): NullModelReport["verdict"] {
+  if (reports.some((report) => report.verdict === "fail")) {
+    return "fail";
+  }
+  return reports.length === 0 || reports.some((report) => report.verdict === "insufficient")
+    ? "insufficient"
+    : "pass";
+}
 
 const Z_95 = 1.96;
 
