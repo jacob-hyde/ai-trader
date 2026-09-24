@@ -16,13 +16,14 @@ const withAddendum = (text: string) => `${REAL}\n### Addendum\n\n${text}\n`;
 const block = (value: unknown) => `\`\`\`json\n${JSON.stringify(value, null, 2)}\n\`\`\``;
 
 describe("the registration", () => {
-  it("reads section 11 of the committed file: version 2, 2022-03-08 taken out, no frozen configuration yet", async () => {
+  it("reads section 11 of the committed file: version 3, 2022-03-08 out, the bad-tick filter, nothing frozen", async () => {
     const registration = await loadRegistration();
-    expect(registration.thresholds.version).toBe(2);
+    expect(registration.thresholds.version).toBe(3);
     expect(registration.thresholds.samples).toEqual({
       inSample: { from: "2016-01-04", to: "2023-12-29", firstTradable: "2016-01-25" },
       holdout: { from: "2024-01-02", to: "2026-08-31" },
       excludedSessions: ["2022-03-08"],
+      badTicks: { maxExcursion: 0.2, maxExcursionRanges: 10, rangeBars: 30, maxCutsPerSession: 5 },
     });
     expect(registration.thresholds.strategy.topN).toBe(20);
     expect(registration.frozen).toBeNull();
@@ -39,10 +40,10 @@ describe("the registration", () => {
   it("refuses a malformed registration rather than guessing", () => {
     expect(() => parseRegistration("# nothing")).toThrow(/no section 11/);
     expect(() => parseRegistration("## 11. Thresholds\n\nnone")).toThrow(/no json block/);
-    expect(() => parseRegistration(REAL.replace('"version": 2', '"version": "two"'))).toThrow(
+    expect(() => parseRegistration(REAL.replace('"version": 3', '"version": "three"'))).toThrow(
       /section 11: version/,
     );
-    expect(() => parseRegistration(REAL.replace('"version": 2,', '"version": 2,,'))).toThrow(
+    expect(() => parseRegistration(REAL.replace('"version": 3,', '"version": 3,,'))).toThrow(
       /not valid JSON/,
     );
     const frozen = { frozenConfiguration: testConfig() };
@@ -117,7 +118,7 @@ describe("the pre-registered configuration", () => {
       blind: true,
     });
     expect(config).toMatchObject({
-      name: "L.2 in-sample, registration v2",
+      name: "L.2 in-sample, registration v3",
       from: "2016-01-04",
       to: "2023-12-29",
       universe: {
@@ -135,6 +136,7 @@ describe("the pre-registered configuration", () => {
       shorts: true,
       session: { lastEntryMinutesBeforeClose: 30, flattenMinutesBeforeClose: 10 },
       maxCostToRisk: 0.15,
+      badTicks: { maxExcursion: 0.2, maxExcursionRanges: 10, rangeBars: 30, maxCutsPerSession: 5 },
       account: { kind: "perSignal", shares: 1 },
       seed: 20260922,
       blind: true,

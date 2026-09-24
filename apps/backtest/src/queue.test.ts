@@ -111,7 +111,7 @@ describe.skipIf(engineUrl === "" || redisUrl === "")("the backtest queue", () =>
       name: "queue test",
       gitCommit: CLEAN.commit,
       gitDirty: false,
-      registrationVersion: 2,
+      registrationVersion: 3,
       error: null,
       progress: { phase: "replay", sessionsDone: 5, sessionsTotal: 5 },
     });
