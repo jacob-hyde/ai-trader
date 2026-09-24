@@ -50,7 +50,7 @@ function universe(
   symbols: ReadonlyArray<{ daily: StoredBar[]; minute: SymbolBar[] }>,
   options: {
     topN?: number;
-    exclude?: string[];
+    exclude?: Array<string | { symbol: string; from: string }>;
     from?: string;
     loaded?: string[];
     calendar?: SessionHours[];
@@ -60,7 +60,11 @@ function universe(
   const rules = {
     ...rulesFor(config),
     topN: options.topN ?? 20,
-    excludeSymbols: new Set(options.exclude ?? []),
+    excludeSymbols: new Map<string, string | null>(
+      (options.exclude ?? []).map((entry) =>
+        typeof entry === "string" ? [entry, null] : [entry.symbol, entry.from],
+      ),
+    ),
   };
   const source = new MemoryStudySource({
     dailyBars: symbols.flatMap((s) => s.daily),
@@ -120,14 +124,22 @@ describe("the screen", () => {
     expect(names(await u.plan(at(21)))).toEqual(["INSIDE"]);
   });
 
-  it("leaves out the exclusion list", async () => {
-    const busy = { index: 14, opening: 1_000 };
+  it("leaves out the exclusion list, a reused ticker only from its fund era on", async () => {
+    // Quiet opens, then busy ones on the two sessions planned.
+    const days = () =>
+      new Map([...steady(0, 13, { close: 20 }), ...steady(14, 15, { close: 20, opening: 1_000 })]);
     const { universe: u } = universe(
-      [series("SPY", steady(0, 14, { close: 20 }, busy)), series("AAA", steady(0, 14, { close: 20 }, busy))],
-      { exclude: ["SPY"] },
+      [
+        series("SPY", days()),
+        series("AAA", days()),
+        // A company until session 14, then a fund's ticker from session 15.
+        series("REUSED", days()),
+      ],
+      { exclude: ["SPY", { symbol: "REUSED", from: at(15) }] },
     );
-    const plan = await u.plan(at(14));
-    expect([plan.eligible, names(plan)]).toEqual([1, ["AAA"]]);
+    expect(names(await u.plan(at(14)))).toEqual(["AAA", "REUSED"]);
+    const fundEra = await u.plan(at(15));
+    expect([fundEra.eligible, names(fundEra)]).toEqual([1, ["AAA"]]);
   });
 });
 

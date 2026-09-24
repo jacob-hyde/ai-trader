@@ -6,7 +6,7 @@
  *                                                    queues a run and follows it to the end
  *   pnpm backtest run <config.json> [--blind]        runs it here, without Redis, recorded the same way
  *   pnpm backtest status [<run id>]                  recent runs, or one of them
- *   pnpm backtest config preregistered [--blind] [--exclude <file>]
+ *   pnpm backtest config preregistered [--blind]
  *                                                    prints the pre-registered in-sample configuration
  *
  * A path is taken relative to where pnpm was run. DATABASE_URL (the engine role) is always needed,
@@ -43,9 +43,7 @@ loadDotenv({ path: path.join(REPO_ROOT, ".env") });
 
 const [command = "", ...rest] = process.argv.slice(2);
 const flags = new Set(rest.filter((arg) => arg.startsWith("--")));
-const positional = rest.filter(
-  (arg, i) => !arg.startsWith("--") && !rest[i - 1]?.match(/^--(concurrency|exclude)$/),
-);
+const positional = rest.filter((arg, i) => !arg.startsWith("--") && !rest[i - 1]?.match(/^--concurrency$/));
 
 function option(name: string): string | undefined {
   const i = rest.indexOf(`--${name}`);
@@ -263,22 +261,8 @@ async function config(): Promise<void> {
   if (positional[0] !== "preregistered") {
     throw new Error("config takes: preregistered");
   }
-  const exclude = option("exclude");
-  const excludeSymbols =
-    exclude === undefined
-      ? []
-      : readFileSync(fromCaller(exclude), "utf8")
-          .split("\n")
-          .map((line) => (line.split("#")[0] ?? "").trim())
-          .filter((line) => line.length > 0);
   const registration = await loadRegistration();
-  console.log(
-    JSON.stringify(
-      preregisteredConfig(registration.thresholds, { excludeSymbols, blind: flags.has("--blind") }),
-      null,
-      2,
-    ),
-  );
+  console.log(JSON.stringify(preregisteredConfig(registration, { blind: flags.has("--blind") }), null, 2));
 }
 
 const commands: Record<string, () => Promise<void>> = { worker, submit, run: runHere, status, config };

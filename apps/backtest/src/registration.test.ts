@@ -6,7 +6,13 @@ import { canonical, parseRunConfig } from "./config.js";
 import { readGit } from "./git.js";
 import { checkRunAllowed } from "./guard.js";
 import { preregisteredConfig } from "./preregistered.js";
-import { REGISTRATION_PATH, RegistrationError, loadRegistration, parseRegistration } from "./registration.js";
+import {
+  REGISTRATION_PATH,
+  RegistrationError,
+  loadRegistration,
+  parseExclusions,
+  parseRegistration,
+} from "./registration.js";
 import { testConfig } from "./testing.js";
 
 const REAL = readFileSync(REGISTRATION_PATH, "utf8");
@@ -112,11 +118,14 @@ const asDeployed = {
 
 describe("the pre-registered configuration", () => {
   it("is section 11's strategy: the confirmatory pair, the ATR diagnostics, shorts, default costs", async () => {
-    const registration = await loadRegistration();
-    const config = preregisteredConfig(registration.thresholds, {
-      excludeSymbols: ["SPY", "QQQ"],
-      blind: true,
-    });
+    const registration = {
+      ...(await loadRegistration()),
+      etfExclusions: [
+        { symbol: "QQQ", from: null },
+        { symbol: "FB", from: "2025-06-26" },
+      ],
+    };
+    const config = preregisteredConfig(registration, { blind: true });
     expect(config).toMatchObject({
       name: "L.2 in-sample, registration v3",
       from: "2016-01-04",
@@ -131,7 +140,7 @@ describe("the pre-registered configuration", () => {
         openingRangeMinutes: 5,
         minOpeningRvol: 1,
         topN: 20,
-        excludeSymbols: ["SPY", "QQQ"],
+        excludeSymbols: ["QQQ", { symbol: "FB", from: "2025-06-26" }],
       },
       shorts: true,
       session: { lastEntryMinutesBeforeClose: 30, flattenMinutesBeforeClose: 10 },
@@ -159,6 +168,45 @@ describe("the pre-registered configuration", () => {
     ]);
     // In-sample only, so it needs no frozen configuration.
     expect(() => checkRunAllowed(config, registration, { commit: null, dirty: true })).not.toThrow();
+  });
+});
+
+describe("the ETF and ETN exclusion list", () => {
+  it("is committed, and the pre-registered run excludes exactly it", async () => {
+    const registration = await loadRegistration();
+    const list = registration.etfExclusions ?? [];
+    const whole = list.filter((entry) => entry.from === null).map((entry) => entry.symbol);
+    expect(list.length).toBeGreaterThan(900);
+    expect(whole).toEqual(
+      expect.arrayContaining(["QQQ", "IWM", "UVXY", "TQQQ", "SQQQ", "USO", "SLV", "XXXX"]),
+    );
+    // Operating companies stay in: the issuers' own stock, a bank, a REIT.
+    for (const company of ["AAPL", "IVZ", "WT", "DB", "IVR", "O"]) {
+      expect(list.map((entry) => entry.symbol)).not.toContain(company);
+    }
+    // FB was Facebook until 2022; only its fund era is out.
+    expect(list.find((entry) => entry.symbol === "FB")).toEqual({ symbol: "FB", from: "2025-06-26" });
+    const excluded = preregisteredConfig(registration, { blind: false }).universe.excludeSymbols;
+    expect(excluded).toHaveLength(list.length);
+    expect(excluded).toContainEqual({ symbol: "FB", from: "2025-06-26" });
+    expect(excluded).toContain("QQQ");
+  });
+
+  it("refuses a malformed list, and a registration that excludes ETFs without one", async () => {
+    expect(
+      parseExclusions("# header\n\nSPY  # SPDR S&P 500 ETF Trust\nFB from 2025-06-26 # a fund now\n"),
+    ).toEqual([
+      { symbol: "SPY", from: null },
+      { symbol: "FB", from: "2025-06-26" },
+    ]);
+    expect(() => parseExclusions("SPY\nspy lower")).toThrow(/not an entry: spy lower/);
+    expect(() => parseExclusions("FB since 2025-06-26")).toThrow(/not an entry/);
+    expect(() => parseExclusions("SPY\nQQQ\nSPY")).toThrow(/listed twice: SPY/);
+    const missing = { ...(await loadRegistration()), etfExclusions: null };
+    expect(() => preregisteredConfig(missing, { blind: true })).toThrow(RegistrationError);
+    expect(
+      (await loadRegistration(REGISTRATION_PATH, `${tmpdir()}/no-such-list.txt`)).etfExclusions,
+    ).toBeNull();
   });
 });
 

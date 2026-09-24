@@ -9,6 +9,7 @@
  *   pnpm bars minute --symbols A,B     or for named symbols, every month in the range
  *   pnpm bars minute --units f         or exactly the symbol-months a file lists, one "SYMBOL YYYY-MM" a line
  *   pnpm bars suspects                 symbol-sessions with a wick 9% past its body, for the bad-tick filter
+ *   pnpm bars etfs                     names every symbol with minute bars, sorted for the ETF/ETN review
  *   pnpm bars verify                   coverage against the calendar, gaps listed
  *   pnpm bars compress                 compress now rather than waiting for the policy (table owner)
  *   pnpm bars analyze                  refresh the planner's statistics on the load's tables (table owner)
@@ -38,6 +39,7 @@ import {
   timeBacktestReads,
 } from "./maintenance.js";
 import { minuteMonths, scanWideWicks } from "./badTicks.js";
+import { type NamedSymbol, classify, loadedSymbolNames } from "./etfs.js";
 import { alpacaSource } from "./source.js";
 import { BarStore } from "./store.js";
 import { fromAssets, fromCorporateActions, fromFile } from "./symbols.js";
@@ -179,6 +181,49 @@ async function daily(): Promise<boolean> {
     `daily: ${String(result.rows)} rows, dropped ${JSON.stringify(result.dropped)}, ${String(result.failedJobs)} failed jobs`,
   );
   return result.failedJobs === 0;
+}
+
+/**
+ * Prints every symbol with minute bars as tab-separated rows: match, symbol, name, where the name came
+ * from, status, exchange. Symbols the snapshot does not name are looked up one at a time (trading API).
+ */
+async function etfs(): Promise<void> {
+  const named: NamedSymbol[] = [];
+  for (const entry of await loadedSymbolNames(pool)) {
+    if (entry.name !== null) {
+      named.push(entry);
+      continue;
+    }
+    const asset = await alpaca().trading.getAsset(entry.symbol);
+    named.push(
+      asset === null
+        ? entry
+        : {
+            symbol: entry.symbol,
+            name: asset.name,
+            from: "lookup",
+            status: asset.status,
+            exchange: asset.exchange,
+          },
+    );
+  }
+  for (const entry of named) {
+    console.log(
+      [
+        classify(entry.name),
+        entry.symbol,
+        entry.name ?? "",
+        entry.from ?? "",
+        entry.status ?? "",
+        entry.exchange ?? "",
+      ].join("\t"),
+    );
+  }
+  const counts = new Map<string, number>();
+  for (const entry of named) {
+    counts.set(classify(entry.name), (counts.get(classify(entry.name)) ?? 0) + 1);
+  }
+  log(`etfs: ${JSON.stringify(Object.fromEntries(counts))}`);
 }
 
 async function suspects(): Promise<void> {
@@ -366,6 +411,9 @@ try {
       break;
     case "suspects":
       await suspects();
+      break;
+    case "etfs":
+      await etfs();
       break;
     case "verify":
       await report();
