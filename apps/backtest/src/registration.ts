@@ -19,6 +19,8 @@ import { type RunConfig, parseRunConfig } from "./config.js";
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = path.resolve(here, "../../..");
 export const REGISTRATION_PATH = path.join(REPO_ROOT, "Docs/Pre-Registration.md");
+/** The frozen ETF and ETN exclusion list (section 3). */
+export const EXCLUSIONS_PATH = path.join(REPO_ROOT, "Docs/ETF-ETN-Exclusions.txt");
 
 const sessionDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
@@ -70,6 +72,15 @@ export interface Registration {
   readonly frozen: RunConfig | null;
   /** Of the whole file, so a run records exactly which text it ran under. */
   readonly sha256: string;
+  /** The frozen ETF and ETN exclusion list, or null before it exists. */
+  readonly etfExclusions: readonly Exclusion[] | null;
+}
+
+/** One entry of the exclusion list: a symbol, for all its history or only from a session on. */
+export interface Exclusion {
+  readonly symbol: string;
+  /** Null for all of its history. */
+  readonly from: string | null;
 }
 
 export class RegistrationError extends Error {
@@ -140,9 +151,53 @@ export function parseRegistration(markdown: string): Registration {
     thresholds: parsed.data,
     frozen,
     sha256: createHash("sha256").update(markdown).digest("hex"),
+    etfExclusions: null,
   };
 }
 
-export async function loadRegistration(file = REGISTRATION_PATH): Promise<Registration> {
-  return parseRegistration(await readFile(file, "utf8"));
+/**
+ * The exclusion list's entries: "SYMBOL" or "SYMBOL from YYYY-MM-DD" a line, anything after a # a
+ * comment. Throws on any other line or a symbol listed twice, since either means the file was edited
+ * by hand after its review.
+ */
+export function parseExclusions(text: string): Exclusion[] {
+  const lines = text
+    .split("\n")
+    .map((line) => (line.split("#")[0] ?? "").trim())
+    .filter((line) => line.length > 0);
+  const entries: Exclusion[] = [];
+  const malformed: string[] = [];
+  for (const line of lines) {
+    const match = /^([A-Z][A-Z0-9.]*)(?: from (\d{4}-\d{2}-\d{2}))?$/.exec(line);
+    if (match === null) {
+      malformed.push(line);
+    } else {
+      entries.push({ symbol: match[1] as string, from: match[2] ?? null });
+    }
+  }
+  if (malformed.length > 0) {
+    throw new RegistrationError(`exclusion list: not an entry: ${malformed.join(", ")}`);
+  }
+  const symbols = entries.map((entry) => entry.symbol);
+  const twice = symbols.filter((symbol, i) => symbols.indexOf(symbol) !== i);
+  if (twice.length > 0) {
+    throw new RegistrationError(`exclusion list: listed twice: ${twice.join(", ")}`);
+  }
+  return entries;
+}
+
+export async function loadRegistration(
+  file = REGISTRATION_PATH,
+  exclusions = EXCLUSIONS_PATH,
+): Promise<Registration> {
+  const registration = parseRegistration(await readFile(file, "utf8"));
+  let text: string | null = null;
+  try {
+    text = await readFile(exclusions, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
+  }
+  return { ...registration, etfExclusions: text === null ? null : parseExclusions(text) };
 }

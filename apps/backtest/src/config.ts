@@ -56,8 +56,15 @@ const universeSchema = z
     /** Opening RVOL must be strictly above this multiple. 1 is 100%. */
     minOpeningRvol: z.number().min(0).max(100),
     topN: z.number().int().min(1).max(1_000),
-    /** Never ranked, e.g. the pre-registration's ETF and ETN list. */
-    excludeSymbols: z.array(z.string().min(1)).default([]),
+    /**
+     * Never ranked, e.g. the pre-registration's ETF and ETN list. A symbol alone is excluded for all its
+     * history; with `from`, only from that session on, for a ticker a fund took over from a company.
+     */
+    excludeSymbols: z
+      .array(
+        z.union([z.string().min(1), z.object({ symbol: z.string().min(1), from: sessionDate }).strict()]),
+      )
+      .default([]),
   })
   .strict()
   .refine((u) => u.priceMin < u.priceMax, { message: "priceMin must be below priceMax" })

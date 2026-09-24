@@ -9,21 +9,28 @@
  * Costs are the default model section 3 names. The cost-sensitivity and as-deployed runs are separate
  * runs with their own configuration, since they change the fills or share an account.
  *
+ * The ETF and ETN exclusions are the frozen list (Docs/ETF-ETN-Exclusions.txt), never a list passed in.
+ *
  * Building the configuration is not running L.2. The preconditions in section 3 (the ETF list committed,
  * H.8 in the replay, the null model passing on the same commit) are L.2's to check.
  */
 
 import { type RunConfig, parseRunConfig } from "./config.js";
-import type { Thresholds } from "./registration.js";
+import { type Registration, RegistrationError } from "./registration.js";
 
 export interface PreregisteredOptions {
-  /** The frozen ETF and ETN list. Empty until it is built. */
-  readonly excludeSymbols: readonly string[];
   readonly blind: boolean;
 }
 
-export function preregisteredConfig(thresholds: Thresholds, options: PreregisteredOptions): RunConfig {
+/** Throws RegistrationError when the registration excludes ETFs and the frozen list does not exist yet. */
+export function preregisteredConfig(registration: Registration, options: PreregisteredOptions): RunConfig {
+  const { thresholds } = registration;
   const { samples, strategy } = thresholds;
+  if (strategy.excludeEtfs && registration.etfExclusions === null) {
+    throw new RegistrationError(
+      "the registration excludes ETFs and ETNs, and the frozen list does not exist",
+    );
+  }
   const exits = strategy.exits.map(({ id, ...exit }) => ({ id, exit }));
   const variants = [
     ...exits.map(({ id, exit }) => ({ id, stop: strategy.stop, exit })),
@@ -49,7 +56,11 @@ export function preregisteredConfig(thresholds: Thresholds, options: Preregister
       openingRangeMinutes: strategy.openingRangeMinutes,
       minOpeningRvol: strategy.minOpeningRvol,
       topN: strategy.topN,
-      excludeSymbols: [...options.excludeSymbols],
+      excludeSymbols: strategy.excludeEtfs
+        ? (registration.etfExclusions ?? []).map(({ symbol, from }) =>
+            from === null ? symbol : { symbol, from },
+          )
+        : [],
     },
     shorts: true,
     variants,

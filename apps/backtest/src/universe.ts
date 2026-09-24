@@ -86,7 +86,8 @@ export interface UniverseRules {
   readonly openingRangeMinutes: number;
   readonly minOpeningRvol: Ratio;
   readonly topN: number;
-  readonly excludeSymbols: ReadonlySet<string>;
+  /** Symbols never ranked, from the session given on, or for all their history when it is null. */
+  readonly excludeSymbols: ReadonlyMap<string, SessionDate | null>;
   /** The bad-tick filter, whose cuts decide which symbol-sessions are corrupted. Null finds none. */
   readonly badTicks: BadTickConfig | null;
   /** More cuts than this in a symbol-session and it is left out whole. */
@@ -105,7 +106,11 @@ export function rulesFor(config: RunConfig): UniverseRules {
     openingRangeMinutes: u.openingRangeMinutes,
     minOpeningRvol: toRatio(u.minOpeningRvol),
     topN: u.topN,
-    excludeSymbols: new Set(u.excludeSymbols),
+    excludeSymbols: new Map(
+      u.excludeSymbols.map((entry) =>
+        typeof entry === "string" ? [entry, null] : [entry.symbol, entry.from],
+      ),
+    ),
     badTicks: badTickConfigFor(config),
     maxCutsPerSession: config.badTicks?.maxCutsPerSession ?? 0,
   };
@@ -340,7 +345,11 @@ export class StudyUniverse {
       if (recent.length < L || oldest === undefined || oldest.index < d - rules.lookbackWindowSessions) {
         continue;
       }
-      if (rules.excludeSymbols.has(symbol) || corrupt.has(symbol)) {
+      const excludedFrom = rules.excludeSymbols.get(symbol);
+      if (
+        (excludedFrom !== undefined && (excludedFrom === null || session >= excludedFrom)) ||
+        corrupt.has(symbol)
+      ) {
         continue;
       }
       const atrToday = history.atr.value;
