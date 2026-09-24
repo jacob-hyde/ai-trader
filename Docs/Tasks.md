@@ -510,6 +510,7 @@ the cost model. Neither alone is the proof.
 ### L.4 — Results metrics
 - **Description:** Equity/drawdown curves, per-trade R, win rate, profit factor, expectancy, Sharpe/Sortino, exposure, R distribution.
 - **Acceptance:** Metrics computed from a run; sanity-checked against a hand calc.
+- **Done:** `apps/backtest/src/metrics.ts`, `report.ts` (2026-09-24). Per variant and direction from a persisted run's trades, a day-clustered interval on expectancy, closed-trade equity in R (and dollars as deployed), matched to a hand-worked 10-trade fixture. Kept with the run as JSON and markdown (`pnpm backtest report`).
 - **Depends on:** L.1  **Labels:** backtest, validation  **Estimate:** 3  **Priority:** P2
 
 ### L.5 — Reproducibility
