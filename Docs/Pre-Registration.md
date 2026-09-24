@@ -269,7 +269,7 @@ Re-promotion after any demotion or HALT needs a logged, 2FA-gated review, not ju
 
 ```json
 {
-  "version": 4,
+  "version": 5,
   "registered": "2026-09-22",
   "samples": {
     "inSample": { "from": "2016-01-04", "to": "2023-12-29", "firstTradable": "2016-01-25" },
@@ -338,6 +338,17 @@ Re-promotion after any demotion or HALT needs a logged, 2FA-gated review, not ju
     "drawdownPromoteMultiple": 1.5,
     "tranches": ["micro", 0.25, 0.5, 1.0],
     "aggressivePosture": { "riskPerTrade": 0.015, "maxPositionPct": 0.25, "maxConcurrent": 4, "dailyLossLimit": 0.05 }
+  },
+  "asDeployed": {
+    "startingCash": 2500,
+    "maxGrossExposure": 1,
+    "maxOpenRisk": 0.02,
+    "flattenOnBreaker": false
+  },
+  "diagnostics": {
+    "costScales": [0.5, 1.5, 2],
+    "rvolBuckets": [[1, 5], [6, 10], [11, 20]],
+    "breakEvenMaxBps": 1000
   },
   "killBands": {
     "trailingTrades": 100,
@@ -521,6 +532,73 @@ that test instead. At 100,000 paths the tripwire sees a leak of about a tenth of
 proves it catches a trigger decided from the breakout bar's own close. A smaller leak can pass.
 
 Section 11 carries this as `nullModel`, and its version is now 4.
+
+### Amendment 6 (2026-09-24): how the verdict and the diagnostics are computed
+
+Sections 4 to 7 fix what is tested and every threshold. Where their text leaves a choice in how a
+number is computed, this fixes it, before any L.2 run, and section 11 now carries the numbers section 7
+gave only in prose. No threshold moves.
+
+**Trades.** A trade is a signal whose entry filled and that the cost gate passed. Its value is net R as
+the run recorded it, in whole basis points of R, floored (section 5), so every sum is exact. A signal
+whose entry never triggered, or that the setup could not express as an order, is not a trade.
+
+**The bootstrap.** The clusters are the sessions with at least one trade of the variant. Each resample
+draws that many of them with replacement, all of a drawn session's trades together, and its statistic
+is total net R over total trades. The draws come from core's mulberry32 generator seeded with section
+11's seed, the same seed for every variant, over the sessions in date order. The one-sided p-value is
+the share of resampled means at or below zero. The one-sided 95% lower bound is their 5th percentile by
+nearest rank. The day-clustered standard error the holdout's second gate uses is their sample standard
+deviation.
+
+**Holm.** The smaller p-value against 0.025, the larger against 0.05, and the larger fails if the
+smaller did.
+
+**Years.** The calendar years of the in-sample window, 2016 to 2023. A year without a trade is not a
+positive year.
+
+**Top 10 (section 4, step 2).** The whole in-sample test again, both exits and Holm, on the trades
+ranked 10 or better. The chosen exit takes top 10 only if it passes every gate there with a higher lower
+bound than at top 20. Per signal, a top-10 name's trade is the same trade at top 20, so this reads the
+same run.
+
+**Preconditions (section 3), as checked.** No verdict is reported unless all hold:
+
+- The run is the pre-registered in-sample configuration exactly, completed, not blind, from a clean
+  checkout at a commit, under this file's text as it stood (the same sha256).
+- The null model's latest run from a clean checkout of that commit passed (Amendment 5).
+- The ETF and ETN list is part of that commit.
+- The bad-tick filter ran, with section 11's settings.
+- No eligible name went unranked for want of minute bars. A name whose lookback traded nothing in the
+  opening minutes has no RVOL to rank and is not a hole.
+
+**Diagnostics (section 7).** Intervals on diagnostics are the analytic day-clustered 95% intervals, not
+the bootstrap, which decides the verdict alone.
+
+- H3: each exit's range-low longs, those the gate passed against those it rejected, which were simulated
+  the same way.
+- H4: the 10% ATR stop's longs, every signal whether the gate passed it or not.
+- 50% ATR: its longs the gate passed.
+- H5: the confirmatory trades by rank, in section 11's buckets (1 to 5, 6 to 10, 11 to 20).
+- Shorts: the range-low shorts the gate passed, both exits.
+- Cost sensitivity: each trade's two fills priced again from the prices they acted at, with every fill
+  kind's per-share slippage times 0.5, 1.5, and 2, rounded up to $0.0001 against the fill, the spread
+  unchanged. The trades stay the same: the gate is not run again, since the question is how much of the
+  result survives dearer fills. At 1x this must reproduce every recorded fill to the unit, or no cost
+  figure is reported.
+- Break-even B: the stop-entry allowance, in basis points of the price it fills against and with no
+  tick floor, at which mean net R on the same trades is zero, found by bisection to 0.01 bps between 0
+  and section 11's ceiling (1,000 bps). It is reported beside the modeled allowance's average in basis
+  points; the difference is the margin. None if the mean is at or below zero with a free stop entry.
+- As deployed: the frozen configuration through one account on section 11's `asDeployed` settings and
+  the aggressive posture in `live.aggressivePosture`. A skipped signal is one refused at sizing or by
+  the risk rules.
+
+**The holdout addendum.** Its JSON block holds `frozenConfiguration`, the exact holdout run, and
+`inSample`: the in-sample run's id and commit, the chosen exit and top N, the trade count, and the net
+mean R. The holdout's second gate reads the in-sample mean from there.
+
+Section 11 is now version 5, with `asDeployed` and `diagnostics`.
 
 ## 13. Known limitations
 

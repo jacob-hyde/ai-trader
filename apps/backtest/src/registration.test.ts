@@ -22,9 +22,9 @@ const withAddendum = (text: string) => `${REAL}\n### Addendum\n\n${text}\n`;
 const block = (value: unknown) => `\`\`\`json\n${JSON.stringify(value, null, 2)}\n\`\`\``;
 
 describe("the registration", () => {
-  it("reads section 11 of the committed file: version 4, 2022-03-08 out, the bad-tick filter, the null model, nothing frozen", async () => {
+  it("reads section 11 of the committed file: version 5, 2022-03-08 out, the bad-tick filter, the null model, nothing frozen", async () => {
     const registration = await loadRegistration();
-    expect(registration.thresholds.version).toBe(4);
+    expect(registration.thresholds.version).toBe(5);
     expect(registration.thresholds.samples).toEqual({
       inSample: { from: "2016-01-04", to: "2023-12-29", firstTradable: "2016-01-25" },
       holdout: { from: "2024-01-02", to: "2026-08-31" },
@@ -41,14 +41,60 @@ describe("the registration", () => {
       cleanCheckout: true,
     });
     expect(registration.frozen).toBeNull();
+    expect(registration.frozenInSample).toBeNull();
     expect(registration.sha256).toMatch(/^[0-9a-f]{64}$/);
+    // Section 7's account and diagnostics, as Amendment 6 put them in section 11.
+    expect(registration.thresholds.asDeployed).toEqual({
+      startingCash: 2_500,
+      maxGrossExposure: 1,
+      maxOpenRisk: 0.02,
+      flattenOnBreaker: false,
+    });
+    expect(registration.thresholds.live.aggressivePosture).toEqual({
+      riskPerTrade: 0.015,
+      maxPositionPct: 0.25,
+      maxConcurrent: 4,
+      dailyLossLimit: 0.05,
+    });
+    expect(registration.thresholds.diagnostics).toEqual({
+      costScales: [0.5, 1.5, 2],
+      rvolBuckets: [
+        [1, 5],
+        [6, 10],
+        [11, 20],
+      ],
+      breakEvenMaxBps: 1_000,
+    });
+    expect(registration.thresholds.statistics).toMatchObject({
+      resamples: 20_000,
+      seed: 20260922,
+      familyAlpha: 0.05,
+    });
+    expect(registration.thresholds.inSampleGates).toMatchObject({ minTrades: 2_000, years: 8 });
+    expect(registration.thresholds.holdoutGates).toEqual({ meanPositive: true, notWorseZ: 1.96 });
   });
 
   it("finds a frozen configuration in an addendum and holds it to the run schema", () => {
     const frozen = testConfig({ name: "frozen" });
     const registration = parseRegistration(withAddendum(block({ frozenConfiguration: frozen })));
     expect(canonical(registration.frozen)).toBe(canonical(frozen));
+    expect(registration.frozenInSample).toBeNull();
     expect(registration.sha256).not.toBe(parseRegistration(REAL).sha256);
+  });
+
+  it("reads the in-sample numbers committed beside the frozen configuration (Amendment 6)", () => {
+    const inSample = {
+      runId: "4f0c0f0e-0000-4000-8000-000000000001",
+      commit: "0123456789abcdef0123456789abcdef01234567",
+      exit: "B",
+      topN: 20,
+      trades: 4_000,
+      netMeanR: 0.031,
+    };
+    const registration = parseRegistration(
+      withAddendum(block({ frozenConfiguration: testConfig({ name: "frozen" }), inSample })),
+    );
+    expect(registration.frozenInSample).toEqual(inSample);
   });
 
   it("refuses a malformed registration rather than guessing", () => {
@@ -59,10 +105,10 @@ describe("the registration", () => {
       expect(REAL).toContain(from);
       return REAL.replace(from, to);
     };
-    expect(() => parseRegistration(broken('"version": 4', '"version": "four"'))).toThrow(
+    expect(() => parseRegistration(broken('"version": 5', '"version": "five"'))).toThrow(
       /section 11: version/,
     );
-    expect(() => parseRegistration(broken('"version": 4,', '"version": 4,,'))).toThrow(/not valid JSON/);
+    expect(() => parseRegistration(broken('"version": 5,', '"version": 5,,'))).toThrow(/not valid JSON/);
     expect(() => parseRegistration(broken('"cleanCheckout": true', '"cleanCheckout": false'))).toThrow(
       /section 11: nullModel/,
     );
@@ -71,6 +117,9 @@ describe("the registration", () => {
       /more than one frozen/,
     );
     expect(() => parseRegistration(withAddendum(block({ ...frozen, note: "x" })))).toThrow(/nothing else/);
+    expect(() => parseRegistration(withAddendum(block({ ...frozen, inSample: { runId: "x" } })))).toThrow(
+      /frozen in-sample numbers: runId/,
+    );
     expect(() => parseRegistration(withAddendum(block({ frozenConfiguration: { name: "x" } })))).toThrow(
       RegistrationError,
     );
@@ -141,7 +190,7 @@ describe("the pre-registered configuration", () => {
     };
     const config = preregisteredConfig(registration, { blind: true });
     expect(config).toMatchObject({
-      name: "L.2 in-sample, registration v4",
+      name: "L.2 in-sample, registration v5",
       from: "2016-01-04",
       to: "2023-12-29",
       universe: {
