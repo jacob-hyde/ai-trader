@@ -311,6 +311,17 @@ export class RunStore {
     return result.rows.map((row) => row.session);
   }
 
+  /** Eligible names the run could not rank, counted by why, over all its sessions. */
+  async unrankable(id: string): Promise<Record<string, number>> {
+    const result = await this.#pool.query<{ reason: string; n: string }>(
+      `SELECT entry->>'reason' AS reason, count(*) AS n
+       FROM backtest_sessions, jsonb_array_elements(unrankable_symbols) AS entry
+       WHERE run_id = $1 GROUP BY 1 ORDER BY 1`,
+      [id],
+    );
+    return Object.fromEntries(result.rows.map((row) => [row.reason, Number(row.n)]));
+  }
+
   /** Keeps a report on a run, replacing an earlier one of the same kind. */
   async saveReport(id: string, kind: string, content: unknown, text: string, git: GitState): Promise<void> {
     await this.#pool.query(

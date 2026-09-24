@@ -13,6 +13,13 @@
  *                                                    prints the pre-registered in-sample configuration
  *   pnpm backtest null-model                         runs the null-model tripwire on this checkout and
  *                                                    records it against the commit (nullModel.ts)
+ *   pnpm backtest l2 in-sample                       the pre-registered in-sample run, its verdict, section 7
+ *   pnpm backtest l2 verdict <run id>                that verdict again for a run, from what it kept
+ *   pnpm backtest l2 holdout                         the frozen configuration on the holdout, once
+ *
+ * L.2 runs only from a clean checkout whose commit the null model has passed on and that holds the ETF
+ * list, and every report says whether its run met section 3's preconditions (l2.ts). The in-sample
+ * command is the first look at the result: nothing before it shows a trade, an R, or a verdict.
  *
  * A path is taken relative to where pnpm was run. DATABASE_URL (the engine role) is always needed,
  * REDIS_URL for worker and submit.
@@ -34,9 +41,21 @@ import { TimescaleReplaySource } from "@trader/data/replay";
 import { QueueEvents } from "bullmq";
 import { config as loadDotenv } from "dotenv";
 import pg from "pg";
-import { type RunConfig, parseRunConfig } from "./config.js";
+import { type RunConfig, canonical, costModelFor, parseRunConfig } from "./config.js";
 import { diffRuns } from "./diff.js";
-import { readGit } from "./git.js";
+import { fileInCommit, readGit } from "./git.js";
+import type { GitState } from "./guard.js";
+import {
+  HOLDOUT_REPORT,
+  type InSampleReport,
+  type RunFacts,
+  VERDICT_REPORT,
+  asDeployedConfig,
+  asDeployedResult,
+  holdoutReport,
+  inSampleReport,
+} from "./l2.js";
+import { renderHoldoutReport, renderInSampleReport } from "./l2Text.js";
 import {
   NULL_MODEL_EXIT_IDS,
   NullModelStore,
@@ -55,7 +74,7 @@ import {
   startWorker,
   submitRun,
 } from "./queue.js";
-import { REPO_ROOT, loadRegistration } from "./registration.js";
+import { EXCLUSIONS_PATH, REPO_ROOT, type Registration, loadRegistration } from "./registration.js";
 import type { RunDependencies, RunProgress, RunSummary } from "./run.js";
 import { type RunRow, RunStore } from "./store.js";
 import { TimescaleStudySource } from "./timescale.js";
@@ -401,6 +420,147 @@ async function nullModel(): Promise<void> {
   });
 }
 
+const ETF_LIST = path.relative(REPO_ROOT, EXCLUSIONS_PATH);
+
+/** Runs a configuration here, recorded like any run, keeps its metrics, and hands back its row. */
+async function runInline(pool: pg.Pool, config: RunConfig): Promise<RunRow> {
+  const store = new RunStore(pool);
+  const runId = await store.create(config);
+  console.log(`run ${runId}: ${config.name}`);
+  const print = progressPrinter();
+  await processRun(runId, { store, dependencies: dependencies(pool) }, (progress) => {
+    print(progress as RunProgress);
+    return Promise.resolve();
+  });
+  const row = (await store.get(runId)) as RunRow;
+  await saveMetrics(pool, row);
+  return row;
+}
+
+/** What L.2's preconditions need to know about a run beyond its row. */
+async function l2Facts(
+  pool: pg.Pool,
+  run: RunRow,
+  expected: RunConfig,
+  registration: Registration,
+): Promise<RunFacts> {
+  const commit = run.gitCommit;
+  return {
+    run,
+    expected,
+    registration,
+    nullModel: commit === null ? undefined : (await new NullModelStore(pool).latestFor([commit])).get(commit),
+    etfListInCommit: commit !== null && (await fileInCommit(commit, ETF_LIST)),
+    unrankable: await new RunStore(pool).unrankable(run.id),
+  };
+}
+
+/** Refuses before a replay is spent on a run that could never count. The report checks all of it again. */
+async function l2Preflight(pool: pg.Pool, git: GitState): Promise<string> {
+  if (git.commit === null || git.dirty) {
+    throw new Error("L.2 runs only from a clean checkout: commit first, so the result names its code");
+  }
+  const commit = git.commit;
+  const nullModel = (await new NullModelStore(pool).latestFor([commit])).get(commit);
+  if (nullModel?.verdict !== "pass") {
+    throw new Error(
+      `the null model has ${nullModel === undefined ? "not run" : `not passed (${nullModel.verdict})`} on ${commit.slice(0, 8)}: pnpm backtest null-model first`,
+    );
+  }
+  if (!(await fileInCommit(commit, ETF_LIST))) {
+    throw new Error(`${ETF_LIST} is not in ${commit.slice(0, 8)}`);
+  }
+  return commit;
+}
+
+/**
+ * The in-sample report for a run: the verdict, section 7, and, with a frozen configuration, the
+ * as-deployed run on it. An as-deployed run already made for this report is used again when it ran the
+ * same configuration on the same commit.
+ */
+async function l2Verdict(pool: pg.Pool, run: RunRow, registration: Registration): Promise<void> {
+  const store = new RunStore(pool);
+  const expected = preregisteredConfig(registration, { blind: false });
+  const facts = await l2Facts(pool, run, expected, registration);
+  const records = await store.trades(run.id);
+  const costModel = costModelFor(expected);
+  let report = inSampleReport({ ...facts, records, costModel, asDeployed: null });
+  const frozen = report.result?.frozen ?? null;
+  if (frozen !== null) {
+    const config = asDeployedConfig(expected, registration.thresholds, frozen);
+    const earlier = (await store.report<InSampleReport>(run.id, VERDICT_REPORT))?.content.result?.asDeployed
+      ?.runId;
+    let deployed = earlier === undefined ? null : await store.get(earlier);
+    if (
+      deployed === null ||
+      deployed.status !== "completed" ||
+      deployed.gitCommit !== run.gitCommit ||
+      canonical(deployed.config) !== canonical(config)
+    ) {
+      console.log("an exit passed: the as-deployed run on the frozen configuration (section 7)");
+      deployed = await runInline(pool, config);
+    }
+    const result = asDeployedResult(
+      deployed,
+      await store.trades(deployed.id),
+      await store.sessions(deployed.id),
+    );
+    report = inSampleReport({ ...facts, records, costModel, asDeployed: result });
+  }
+  const text = renderInSampleReport(report);
+  await store.saveReport(run.id, VERDICT_REPORT, report, text, await readGit());
+  console.log(text);
+}
+
+async function l2(): Promise<void> {
+  const [step, id] = positional;
+  const git = await readGit();
+  const registration = await loadRegistration();
+  await withPool(async (pool) => {
+    if (step === "in-sample") {
+      await l2Preflight(pool, git);
+      console.log(
+        "L.2 in-sample: the pre-registered run with outcomes kept. This is the first look at the result.",
+      );
+      const run = await runInline(pool, preregisteredConfig(registration, { blind: false }));
+      await l2Verdict(pool, run, registration);
+    } else if (step === "verdict") {
+      if (id === undefined) {
+        throw new Error("l2 verdict takes a run id");
+      }
+      const run = await new RunStore(pool).get(id);
+      if (run === null) {
+        throw new Error(`no run ${id}`);
+      }
+      if (git.commit !== run.gitCommit || git.dirty) {
+        throw new Error(
+          `the verdict is computed by the code that ran: check out ${run.gitCommit?.slice(0, 8) ?? "its commit"} clean first`,
+        );
+      }
+      await l2Verdict(pool, run, registration);
+    } else if (step === "holdout") {
+      if (registration.frozen === null) {
+        throw new Error(
+          "the holdout runs on a frozen configuration committed to Docs/Pre-Registration.md, and there is none",
+        );
+      }
+      await l2Preflight(pool, git);
+      console.log("L.2 holdout: the frozen configuration on the holdout, once.");
+      const run = await runInline(pool, registration.frozen);
+      const store = new RunStore(pool);
+      const report = holdoutReport({
+        ...(await l2Facts(pool, run, registration.frozen, registration)),
+        records: await store.trades(run.id),
+      });
+      const text = renderHoldoutReport(report);
+      await store.saveReport(run.id, HOLDOUT_REPORT, report, text, await readGit());
+      console.log(text);
+    } else {
+      throw new Error("l2 takes: in-sample | verdict <run id> | holdout");
+    }
+  });
+}
+
 const commands: Record<string, () => Promise<void>> = {
   worker,
   submit,
@@ -410,11 +570,12 @@ const commands: Record<string, () => Promise<void>> = {
   report,
   config,
   "null-model": nullModel,
+  l2,
 };
 const chosen = commands[command];
 if (chosen === undefined) {
   console.log(
-    "usage: pnpm backtest worker | submit <config.json> | run <config.json> | status [<run id>] | diff <a> <b> | report <run id> | config preregistered | null-model",
+    "usage: pnpm backtest worker | submit <config.json> | run <config.json> | status [<run id>] | diff <a> <b> | report <run id> | config preregistered | null-model | l2 in-sample | l2 verdict <run id> | l2 holdout",
   );
   process.exitCode = 1;
 } else {

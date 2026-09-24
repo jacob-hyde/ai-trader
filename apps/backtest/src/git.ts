@@ -24,3 +24,13 @@ export async function readGit(root = REPO_ROOT): Promise<GitState> {
     return { commit: null, dirty: false };
   }
 }
+
+/** Whether `file` (relative to the repository root) is part of `commit`. False when git cannot say. */
+export async function fileInCommit(commit: string, file: string, root = REPO_ROOT): Promise<boolean> {
+  try {
+    await run("git", ["cat-file", "-e", `${commit}:${file}`], { cwd: root });
+    return true;
+  } catch {
+    return false;
+  }
+}
