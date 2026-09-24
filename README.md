@@ -51,6 +51,7 @@ pnpm backtest status [<run id>]
 pnpm backtest report <run id>                   # a run's metrics (L.4), kept with it; run and submit keep them too
 pnpm backtest diff <run id> <run id>            # what differs: commit, data snapshot, configuration, results
 pnpm backtest null-model                        # the null-model tripwire on this checkout, kept against the commit
+pnpm backtest l2 in-sample | verdict <run id> | holdout
 ```
 
 A run is refused from a checkout with uncommitted changes, so every number names the commit that made it
@@ -78,6 +79,19 @@ produced it. On a clean checkout of that commit:
 
 `pnpm backtest status` shows the null model's verdict on each run's commit. FAIL voids every number from
 that commit (pre-registration section 10). NOT RUN means run it before looking.
+
+### The L.2 campaign
+
+1. On a clean checkout of the commit that will run: `pnpm backtest null-model`, which must pass.
+2. `pnpm backtest l2 in-sample` runs the pre-registered in-sample run with outcomes kept. It is the first
+   look at the result. It checks section 3's preconditions, computes section 6's verdict and section 7's
+   diagnostics as Amendment 6 fixes them, runs the as-deployed account on the frozen configuration when
+   an exit passes, and keeps the report with the run.
+3. NO EDGE: the project stops (section 10). EDGE CANDIDATE: commit a dated addendum to
+   `Docs/Pre-Registration.md` with the verdict, its numbers, and the JSON block the report prints. Then,
+   on that commit, the null model again and `pnpm backtest l2 holdout`, once.
+
+`pnpm backtest l2 verdict <run id>` computes a run's report again, from a clean checkout of its commit.
 
 ## Modes
 

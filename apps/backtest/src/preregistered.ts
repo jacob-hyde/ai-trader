@@ -18,6 +18,14 @@
 import { type RunConfig, parseRunConfig } from "./config.js";
 import { type Registration, RegistrationError } from "./registration.js";
 
+/** The published 10% ATR stop (H4) and the 50% ATR stop, both diagnostics (section 7). */
+export const ATR_DIAGNOSTIC_FRACTIONS = [0.1, 0.5] as const;
+
+/** A diagnostic ATR stop's variant id on one of the confirmatory exits: "atr10A", "atr50B". */
+export function atrVariantId(fraction: number, exitId: string): string {
+  return `atr${String(Math.round(fraction * 100))}${exitId}`;
+}
+
 export interface PreregisteredOptions {
   readonly blind: boolean;
 }
@@ -34,9 +42,9 @@ export function preregisteredConfig(registration: Registration, options: Preregi
   const exits = strategy.exits.map(({ id, ...exit }) => ({ id, exit }));
   const variants = [
     ...exits.map(({ id, exit }) => ({ id, stop: strategy.stop, exit })),
-    ...[0.1, 0.5].flatMap((fraction) =>
+    ...ATR_DIAGNOSTIC_FRACTIONS.flatMap((fraction) =>
       exits.map(({ id, exit }) => ({
-        id: `atr${String(Math.round(fraction * 100))}${id}`,
+        id: atrVariantId(fraction, id),
         stop: { kind: "atrFraction", fraction },
         exit,
       })),
