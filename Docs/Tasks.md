@@ -499,7 +499,7 @@ the cost model. Neither alone is the proof.
 ### L.2 — ORB backtest (pre-registered)
 - **Description:** Run the test exactly as `Docs/Pre-Registration.md` fixes it. Confirmatory: the **range-low stop** with two exits, EOD flatten and a 2R target with breakeven at 1R, top-20 opening RVOL, ETFs/ETNs excluded, long only, cost model and cost-to-risk gate on. In-sample 2016 to 2023 decides the verdict; the 2024-01 to 2026-08 holdout runs once on the frozen configuration. The published 10% ATR stop is **not** a confirmatory arm (on real 2017 data it passed the 0.15R gate on 1 signal in 873); it runs gate-off as a diagnostic next to the 50% ATR stop.
 - **Acceptance:** Both exits on identical data/seed; verdict per gate computed from the pre-registration's thresholds; year-by-year table, RVOL-bucket table, and every section 7 diagnostic persisted with the run; preconditions checked (complete data, H.8 filter, ETF list committed, null model passing on the same commit); holdout sessions refused until the frozen configuration is committed.
-- **Built:** `pnpm backtest l2 in-sample | verdict | holdout` (2026-09-24), computed as Amendment 6 fixes it. Not yet run.
+- **Done:** `pnpm backtest l2 in-sample | verdict | holdout` (2026-09-24), computed as Amendment 6 fixes it. In-sample result NO EDGE (run 2cc91018 on 8e7d64a): both exits negative in every year, so the holdout does not run. Recorded in `Docs/Pre-Registration.md` section 14.
 - **Depends on:** L.0, L.1, C.6, C.8, L.6, H.8  **Labels:** backtest, validation  **Estimate:** 3  **Priority:** P2
 
 ### L.3 — Null-model run + report

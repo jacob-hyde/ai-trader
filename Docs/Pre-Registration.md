@@ -613,3 +613,61 @@ Section 11 is now version 5, with `asDeployed` and `diagnostics`.
   them. Section 10's cost check exists for exactly this.
 - **Minute bars.** Fills act on one-minute bars with worst-case ordering. Finer data would be less
   pessimistic on the entry bar and more realistic on fast gaps.
+
+## 14. Result
+
+This section records outcomes. It changes nothing above.
+
+### In-sample (2026-09-24): NO EDGE
+
+Run 2cc91018-ca88-42f9-b7fb-801cef276473, the pre-registered in-sample run, on commit
+8e7d64a15d9ded07a6533911f56255f1831cbf89 under this file at version 5 (sha256
+a8a7b18045e12bd45f2434e6597238f4d76952c3e82b34b2b26dee24b3dcd6fd), data snapshot a6217f3a137037f2.
+Every section 3 precondition held as Amendment 6 checks them: the null model passed on that commit, the
+ETF list was in it, the bad-tick filter ran, and no eligible name went unranked for want of minute bars.
+
+Neither confirmatory exit passes section 6:
+
+| Gate | A (EOD) | B (2R, breakeven at 1R) |
+|---|---|---|
+| Trades | 8,003 | 8,003 |
+| Net mean R | -0.0432R | -0.0323R |
+| One-sided 95% lower bound | -0.0668R | -0.0524R |
+| Bootstrap p-value, Holm threshold | 0.9974, 0.05 | 0.9948, 0.025 |
+| Years positive | 0 of 8 | 0 of 8 |
+| Without 2020 and 2021 | -0.0365R | -0.0356R |
+
+| Year | A net mean R | B net mean R | Trades |
+|---|---|---|---|
+| 2016 | -0.0120R | -0.0122R | 725 |
+| 2017 | -0.0537R | -0.0388R | 698 |
+| 2018 | -0.0317R | -0.0320R | 892 |
+| 2019 | -0.0406R | -0.0362R | 860 |
+| 2020 | -0.0510R | -0.0406R | 1,234 |
+| 2021 | -0.0643R | -0.0100R | 1,284 |
+| 2022 | -0.0302R | -0.0347R | 1,213 |
+| 2023 | -0.0494R | -0.0523R | 1,097 |
+
+The top 10 alone fails too: -0.0293R (A) and -0.0212R (B) over 4,503 trades each.
+
+**Outcome: NO EDGE.** Section 10, rule 1: the project stops. No capital beyond the micro regime and no
+further build-out of this strategy. Nothing is frozen, and the holdout, 2024-01-02 to 2026-08-31, is not
+run and stays unseen. Any new setup or variant is a new study with its own pre-registration, and 2016 to
+2023 is no longer out of sample for it.
+
+**What section 7 adds.** None of it is a verdict.
+
+- Before costs both exits are slightly positive, +0.0344R (A) and +0.0467R (B). The modeled costs take
+  about 0.08R a trade.
+- With every slippage allowance halved both are still negative, -0.0187R and -0.0070R, and neither
+  reaches zero with a free stop entry.
+- The gate works: the range-low longs it rejected lost -0.2456R (A) and -0.2694R (B).
+- The published 10% ATR stop, gate off, lost -1.2109R (A) and -1.2484R (B). The gate passed 75 of its
+  19,757 long signals.
+- The 50% ATR stop lost -0.0539R (A) and -0.0430R (B).
+- By RVOL rank, 1 to 5, 6 to 10, 11 to 20: -0.0155R, -0.0453R, -0.0611R (A) and -0.0101R, -0.0341R,
+  -0.0465R (B). Ordered as H5 expects, all below zero.
+- The shorts lost -0.0181R (A) and -0.0139R (B).
+
+The full report and the run's metrics are kept with the run (backtest_reports, kinds "verdict" and
+"metrics").
