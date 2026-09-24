@@ -4,3 +4,5 @@ packages:
   - "data"
 allowBuilds:
   esbuild: true
+  # BullMQ's msgpackr only uses the native build to go faster; the JavaScript path is fine for a job queue.
+  msgpackr-extract: false

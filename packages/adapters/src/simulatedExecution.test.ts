@@ -545,6 +545,28 @@ describe("SimulatedExecution orders", () => {
     expect(b.endSession({ session: SESSION, minuteOfSession: 390 })).toEqual({ closed: [], expired: [] });
   });
 
+  it("tells what each fill acted at before costs and which allowance priced it", async () => {
+    const b = broker();
+    const fills: Fill[] = [];
+    b.on("fill", (f) => fills.push(f));
+    await b.submitBracket(bracket);
+    await b.submitBracket({ ...bracket, clientOrderId: "held", takeProfit: null });
+    // Gaps through the 203_000 trigger: both entries act at the open.
+    b.onBar(bar(5, 203_500, 204_000, 203_400, 203_900));
+    b.onBar(bar(6, 204_000, 210_500, 203_900, 210_000));
+    await b.flattenAll();
+    b.onBar(bar(7, 209_000, 209_500, 208_000, 208_500));
+    expect(fills.map((f) => [f.clientOrderId, b.fillBasis(f.id)])).toEqual([
+      [bracket.clientOrderId, { reference: 203_500, kind: "stopEntry" }],
+      ["held", { reference: 203_500, kind: "stopEntry" }],
+      // The take-profit acts at its limit, never better, at the market allowance.
+      [bracket.clientOrderId, { reference: 210_000, kind: "market" }],
+      ["held", { reference: 209_000, kind: "market" }],
+    ]);
+    expect(fills.every((f) => f.price !== b.fillBasis(f.id)?.reference)).toBe(true);
+    expect(b.fillBasis("fill-99")).toBeUndefined();
+  });
+
   it("fills a flatten still waiting for a bar at the close, the same as a flatten the close forced", async () => {
     const waiting = broker();
     const forced = broker();

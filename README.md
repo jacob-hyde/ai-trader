@@ -13,6 +13,7 @@ The plan lives in `Docs/`:
 
 ```
 apps/engine         Node/TS real-time trading engine
+apps/backtest       Backtest runner: BullMQ queue, worker, CLI (L.1)
 apps/web            Laravel + Vue GUI (scaffolded when EPIC-K starts)
 packages/core       Pure decision core: sizing, risk, indicators, setups. No I/O.
 packages/adapters   Data + execution adapters: backtest | paper | live
@@ -35,6 +36,23 @@ pnpm alpaca:smoke           # read-only check of every Alpaca endpoint and both 
 
 `.env` is gitignored. Keys never go in the database or the UI. The engine connects with a data-only
 database role; only the migration runner (`data/`) can change the schema.
+
+## Backtests
+
+A run is a JSON configuration (`apps/backtest/src/config.ts`). Runs, their sessions, trades, and fills go
+into Postgres under a run id; the queue is BullMQ on the compose Redis (host port 6380).
+
+```bash
+pnpm backtest config preregistered > run.json   # the pre-registered in-sample run, from section 11
+pnpm backtest worker                            # takes queued runs until stopped
+pnpm backtest submit run.json                   # queues a run and follows its progress to the end
+pnpm backtest run run.json                      # the same run here, without Redis
+pnpm backtest status [<run id>]
+```
+
+Every run takes the pre-registration's excluded sessions out of its calendar, and refuses holdout sessions
+until a frozen configuration is committed to `Docs/Pre-Registration.md`. `--blind` runs everything and keeps
+nothing after 09:35: timing and signal-time counts only, no trade, fill, or R.
 
 ## Modes
 

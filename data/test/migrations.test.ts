@@ -92,20 +92,21 @@ describe.skipIf(!ownerUrl || !engineUrl)("A.4 migrations and TimescaleDB", () =>
       await runner({ ...scratchBase, direction: "up", count: Number.POSITIVE_INFINITY });
       await client.connect();
       const present = async (): Promise<boolean[]> => {
-        const result = await client.query<{ fn: boolean; bars: boolean }>(
+        const result = await client.query<{ fn: boolean; bars: boolean; runs: boolean }>(
           `SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'trader_make_hypertable') AS fn,
-             to_regclass('bars_1m') IS NOT NULL AS bars`,
+             to_regclass('bars_1m') IS NOT NULL AS bars, to_regclass('backtest_runs') IS NOT NULL AS runs`,
         );
         const row = result.rows[0];
-        return [row?.fn ?? false, row?.bars ?? false];
+        return [row?.fn ?? false, row?.bars ?? false, row?.runs ?? false];
       };
-      expect(await present()).toEqual([true, true]);
+      expect(await present()).toEqual([true, true, true]);
 
-      await runner({ ...scratchBase, direction: "down", count: 2 });
-      expect(await present()).toEqual([false, false]);
+      // 0005 backtest runs, 0004 bar store, 0003 hypertable helper.
+      await runner({ ...scratchBase, direction: "down", count: 3 });
+      expect(await present()).toEqual([false, false, false]);
 
       await runner({ ...scratchBase, direction: "up", count: Number.POSITIVE_INFINITY });
-      expect(await present()).toEqual([true, true]);
+      expect(await present()).toEqual([true, true, true]);
     } finally {
       await client.end();
       await owner.query(`DROP DATABASE IF EXISTS ${scratch} WITH (FORCE)`);

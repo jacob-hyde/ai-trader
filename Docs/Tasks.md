@@ -492,6 +492,7 @@ the cost model. Neither alone is the proof.
 ### L.1 — Backtest job runner
 - **Description:** BullMQ job: Laravel enqueues config → Node worker runs backtest adapter → results to DB; progress events.
 - **Acceptance:** A submitted config runs to completion with progress; results persisted.
+- **Done:** `apps/backtest` (2026-09-23). Per-signal and as-deployed runs, several variants on one replay, blind mode, the pre-registration's excluded sessions and holdout guard. The Laravel enqueue endpoint waits for EPIC-K.
 - **Depends on:** F.2  **Labels:** backtest, engine  **Estimate:** 5  **Priority:** P2
 
 ### L.2 — ORB backtest (pre-registered)
