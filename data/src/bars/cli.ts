@@ -8,11 +8,12 @@
  *   pnpm bars minute --universe        minute bars for those symbol-months
  *   pnpm bars minute --symbols A,B     or for named symbols, every month in the range
  *   pnpm bars minute --units f         or exactly the symbol-months a file lists, one "SYMBOL YYYY-MM" a line
+ *   pnpm bars suspects                 symbol-sessions with a wick 9% past its body, for the bad-tick filter
  *   pnpm bars verify                   coverage against the calendar, gaps listed
  *   pnpm bars compress                 compress now rather than waiting for the policy (table owner)
  *   pnpm bars analyze                  refresh the planner's statistics on the load's tables (table owner)
  *   pnpm bars status                   sizes, checkpoints, and timed backtest reads
- *   pnpm bars all                      calendar, symbols, daily, minute --universe, verify, compress
+ *   pnpm bars all                      calendar, symbols, daily, minute --universe, suspects, verify, compress
  *
  * Every load resumes: run it again and it fetches only the symbol-months without a complete checkpoint.
  * A file path is taken relative to where pnpm was run.
@@ -36,6 +37,7 @@ import {
   compressionStats,
   timeBacktestReads,
 } from "./maintenance.js";
+import { minuteMonths, scanWideWicks } from "./badTicks.js";
 import { alpacaSource } from "./source.js";
 import { BarStore } from "./store.js";
 import { fromAssets, fromCorporateActions, fromFile } from "./symbols.js";
@@ -177,6 +179,12 @@ async function daily(): Promise<boolean> {
     `daily: ${String(result.rows)} rows, dropped ${JSON.stringify(result.dropped)}, ${String(result.failedJobs)} failed jobs`,
   );
   return result.failedJobs === 0;
+}
+
+async function suspects(): Promise<void> {
+  const months = await minuteMonths(pool, fromDate, toDate);
+  const found = await scanWideWicks(pool, months, log);
+  log(`suspects: ${String(found)} symbol-sessions over ${String(months.length)} months`);
 }
 
 async function universe(): Promise<Unit[]> {
@@ -356,6 +364,9 @@ try {
       }
       await analyze();
       break;
+    case "suspects":
+      await suspects();
+      break;
     case "verify":
       await report();
       break;
@@ -373,6 +384,7 @@ try {
       await symbols();
       ok = (await daily()) && ok;
       ok = (await minute(await universe())) && ok;
+      await suspects();
       // Before verify, which plans its queries on these statistics.
       await analyze();
       await report();

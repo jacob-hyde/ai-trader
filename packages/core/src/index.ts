@@ -12,6 +12,7 @@
  */
 export const CORE_VERSION = "0.0.1";
 
+export * from "./badTicks.js";
 export * from "./bars.js";
 export * from "./brackets.js";
 export * from "./costToRisk.js";

@@ -4,8 +4,8 @@
  */
 
 import type { StoredBar } from "@trader/adapters";
-import type { SymbolBar } from "@trader/contracts";
-import type { OpeningVolume, StudySource } from "./universe.js";
+import type { Bar, SymbolBar } from "@trader/contracts";
+import type { OpeningVolume, StudySource, WideWickSession } from "./universe.js";
 
 export interface MemoryStudySourceData {
   readonly dailyBars: readonly StoredBar[];
@@ -48,6 +48,33 @@ export class MemoryStudySource implements StudySource {
       sums.set(key, { symbol: bar.symbol, session: bar.session, volume });
     }
     return Promise.resolve([...sums.values()]);
+  }
+
+  wideWickSessions(month: string): Promise<readonly WideWickSession[]> {
+    this.calls.push(`wideWickSessions ${month}`);
+    const counts = new Map<string, WideWickSession>();
+    for (const bar of this.#minute) {
+      const wide =
+        bar.high > Math.max(bar.open, bar.close) * 1.09 || bar.low < Math.min(bar.open, bar.close) * 0.91;
+      if (!bar.session.startsWith(month) || !wide) {
+        continue;
+      }
+      const key = `${bar.symbol}|${bar.session}`;
+      counts.set(key, {
+        symbol: bar.symbol,
+        session: bar.session,
+        wideBars: (counts.get(key)?.wideBars ?? 0) + 1,
+      });
+    }
+    return Promise.resolve([...counts.values()]);
+  }
+
+  sessionMinuteBars(symbol: string, session: string): Promise<readonly Bar[]> {
+    return Promise.resolve(
+      this.#minute
+        .filter((bar) => bar.symbol === symbol && bar.session === session)
+        .sort((a, b) => a.minuteOfSession - b.minuteOfSession),
+    );
   }
 
   minuteMonths(): Promise<ReadonlyMap<string, ReadonlySet<string>>> {

@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import type { BracketOrder, Fill, Fixed, Order, SymbolBar } from "@trader/contracts";
 import { fixed, ratio } from "@trader/contracts";
 import {
+  type ClippedExtreme,
   type CostModelConfig,
+  DEFAULT_BAD_TICK_CONFIG,
   DEFAULT_COST_MODEL,
   DEFAULT_PATH_CONFIG,
   type FillKind,
@@ -28,6 +30,7 @@ import {
   type SessionHours,
   type StoredBar,
   restate,
+  withBadTickFilter,
   withoutSessions,
 } from "./replaySource.js";
 
@@ -334,6 +337,73 @@ describe("taking sessions out", () => {
     const report = await a.replay();
     expect(report.sessions).toBe(2);
     expect([...sessions]).toEqual(["2026-01-05", "2026-01-07"]);
+  });
+});
+
+describe("the bad-tick filter between the store and the broker", () => {
+  // AAA prints $25 for one bar at minute 2 of Monday, on a $20 name. BBB is clean.
+  const minuteBars = [
+    ...flat("AAA", MON, 0, 2, 20),
+    bar("AAA", MON, 2, [20, 25, 19.99, 20.01]),
+    ...flat("AAA", MON, 3, 6, 20),
+    ...flat("BBB", MON, 0, 6, 30),
+  ];
+
+  it("cuts the print from the replayed bars and reports it, and from a lookback without reporting it", async () => {
+    const heard: Array<[string, number, readonly ClippedExtreme[]]> = [];
+    const inner = source({ minuteBars, dailyBars: [daily("AAA", MON, 20, 1)] });
+    const filtered = withBadTickFilter(inner, DEFAULT_BAD_TICK_CONFIG, (b, clipped) =>
+      heard.push([b.symbol, b.minuteOfSession, clipped]),
+    );
+    const replayed = await filtered.sessionBars(MON, ["AAA", "BBB"]);
+    expect(replayed.find((b) => b.symbol === "AAA" && b.minuteOfSession === 2)?.high).toBe(px(20.01));
+    expect(replayed.filter((b) => b.symbol === "BBB")).toEqual(minuteBars.filter((b) => b.symbol === "BBB"));
+    // 20% past the higher of the close (20.01) and the last close (20.00).
+    expect(heard).toEqual([
+      ["AAA", 2, [{ side: "high", reported: px(25), kept: px(20.01), limit: px(24.012) }]],
+    ]);
+
+    const lookback = await filtered.minuteBars(
+      "AAA",
+      new Date(MON.openAt).toISOString(),
+      new Date(MON.closeAt).toISOString(),
+    );
+    expect(lookback.find((b) => b.minuteOfSession === 2)?.high).toBe(px(20.01));
+    expect(lookback.every((b) => "splitFactor" in b)).toBe(true);
+    expect(heard).toHaveLength(1);
+    // Everything else passes straight through.
+    expect(await filtered.sessions("2026-01-05", "2026-01-05")).toEqual([MON]);
+    expect(await filtered.loaded("2026-01-05", ["AAA"])).toEqual(new Set(["AAA"]));
+    expect(await filtered.splitFactor("AAA", "2026-01-05")).toBe(1);
+    expect(
+      await filtered.dailyBars(
+        "AAA",
+        new Date(MON.openAt).toISOString(),
+        new Date(MON.closeAt).toISOString(),
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("keeps a bad print from filling a resting stop entry", async () => {
+    const replayWith = async (filter: boolean) => {
+      const inner = source({ minuteBars });
+      const a = await BacktestAdapter.create({
+        source: filter ? withBadTickFilter(inner, DEFAULT_BAD_TICK_CONFIG) : inner,
+        from: "2026-01-05",
+        to: "2026-01-05",
+        universe: ["AAA"],
+        costModel: DEFAULT_COST_MODEL,
+        startingCash: CASH,
+      });
+      await a.connect();
+      await a.execution.submitBracket(bracketFor("AAA", "aaa", { type: "stop", stopPrice: px(21) }, 19));
+      const fills = fillsOf(a);
+      await a.replay();
+      return fills.map((f) => f.orderId);
+    };
+    // Unfiltered, the $25 print buys at $21 and the close sells it back.
+    expect(await replayWith(false)).toEqual(["aaa/entry", "aaa/flatten"]);
+    expect(await replayWith(true)).toEqual([]);
   });
 });
 

@@ -339,6 +339,7 @@ pure functions with full unit coverage.
 ### H.8 — Bad-tick / quote sanity filter
 - **Description:** Reject quotes or prints more than a configurable threshold away from the last closed bar (and from the NBBO) before any stage acts on them. An erroneous print must never trigger a stop, a breakout, or a watchlist trigger.
 - **Acceptance:** Injected outlier prints are dropped and logged; legitimate fast moves pass; covered by a D.2 synthetic path.
+- **Done (backtest side):** `packages/core/src/badTicks.ts` (2026-09-23), in every backtest replay, with thresholds and the corrupted-day rule registered in Pre-Registration Amendment 3. `isSanePrint` and `isSaneQuote` wait for H.3 to wire them into the live feed.
 - **Depends on:** H.3  **Labels:** data, safety  **Estimate:** 2  **Priority:** P0
 
 ---

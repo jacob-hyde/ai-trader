@@ -10,6 +10,7 @@
 
 import type { Fixed, IsoTimestamp, SessionDate, SymbolBar } from "@trader/contracts";
 import { fixed } from "@trader/contracts";
+import { type BadTickConfig, BadTickFilter, type ClippedExtreme } from "@trader/core";
 
 /** One regular session: its New York date and its open and close as epoch milliseconds. Half days close early. */
 export interface SessionHours {
@@ -120,6 +121,50 @@ export function withoutSessions(source: ReplaySource, excluded: readonly Session
     sessionBars: async (hours, symbols) => (out.has(hours.session) ? [] : source.sessionBars(hours, symbols)),
     dailyBars: async (symbol, from, to) => keep(await source.dailyBars(symbol, from, to)),
     minuteBars: async (symbol, from, to) => keep(await source.minuteBars(symbol, from, to)),
+    splitFactor: (symbol, session) => source.splitFactor(symbol, session),
+  };
+}
+
+/**
+ * A replay source whose minute bars pass through the bad-tick filter (H.8) on their way out, so neither
+ * the broker nor the engine ever acts on a bad print. Each symbol's bars are judged in time order, a
+ * session at a time, on the bars before them only, exactly as the filter would judge them live.
+ *
+ * `onClip` hears every cut made to a session's replayed bars. Lookback reads are filtered the same way
+ * but not reported, so each cut is heard once.
+ */
+export function withBadTickFilter(
+  source: ReplaySource,
+  config: BadTickConfig,
+  onClip: (bar: SymbolBar, clipped: readonly ClippedExtreme[]) => void = () => undefined,
+): ReplaySource {
+  const judge = <B extends SymbolBar>(rows: readonly B[], report: boolean): B[] => {
+    const bySymbol = new Map<string, B[]>();
+    for (const row of rows) {
+      (bySymbol.get(row.symbol) ?? bySymbol.set(row.symbol, []).get(row.symbol))?.push(row);
+    }
+    const out: B[] = [];
+    for (const list of bySymbol.values()) {
+      list.sort((a, b) =>
+        a.session === b.session ? a.minuteOfSession - b.minuteOfSession : a.session < b.session ? -1 : 1,
+      );
+      const filter = new BadTickFilter(config);
+      for (const row of list) {
+        const { bar, clipped } = filter.filter(row);
+        if (report && clipped.length > 0) {
+          onClip(bar, clipped);
+        }
+        out.push(bar);
+      }
+    }
+    return out;
+  };
+  return {
+    sessions: (from, to) => source.sessions(from, to),
+    loaded: (session, symbols) => source.loaded(session, symbols),
+    sessionBars: async (hours, symbols) => judge(await source.sessionBars(hours, symbols), true),
+    dailyBars: (symbol, from, to) => source.dailyBars(symbol, from, to),
+    minuteBars: async (symbol, from, to) => judge(await source.minuteBars(symbol, from, to), false),
     splitFactor: (symbol, session) => source.splitFactor(symbol, session),
   };
 }

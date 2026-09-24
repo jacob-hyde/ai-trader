@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { MemoryReplaySource, type SessionHours } from "@trader/adapters";
 import type { SymbolBar } from "@trader/contracts";
 import {
+  BadTickFilter,
   SCRIPTED_SCENARIOS,
   type Scenario,
   type SymbolState,
@@ -85,9 +86,12 @@ describe("the engine agrees with the trade simulator on the same bars", () => {
     for (const hours of SESSIONS) {
       const minutes = minutesOf(hours);
       for (const symbol of SYMBOLS) {
+        // What the broker and the engine see: the stored bars through the bad-tick filter.
+        const filter = new BadTickFilter();
         const bars = data.minute
           .filter((b) => b.symbol === symbol && b.session === hours.session)
-          .sort((a, b) => a.minuteOfSession - b.minuteOfSession);
+          .sort((a, b) => a.minuteOfSession - b.minuteOfSession)
+          .map((b) => filter.filter(b).bar);
         const proof = bars.findIndex((b) => b.minuteOfSession >= 4);
         const upTo = bars.slice(0, proof + 1);
         const last = upTo.at(-1) as SymbolBar;
@@ -331,6 +335,33 @@ describe("a plan no order can express", () => {
   });
 });
 
+describe("the bad-tick filter", () => {
+  it("cuts a bad print before the broker sees it, records the cut, and off replays the print", async () => {
+    const on = await collect(testConfig());
+    const off = await collect(testConfig({ badTicks: null }));
+    const cuts = on.results.flatMap((r) => r.badTicks ?? []);
+    // Every badTick-scenario session has its one spike at minute 6, and nothing else is cut.
+    const spiked = market()
+      .minute.filter((b) => b.minuteOfSession === 6 && (b.high > b.open * 1.15 || b.low < b.open * 0.85))
+      .map((b) => `${b.session} ${b.symbol}`);
+    expect(spiked.length).toBeGreaterThan(5);
+    expect(
+      on.results.flatMap((r) => (r.badTicks ?? []).map((c) => `${r.stats.session} ${c.symbol}`)).sort(),
+    ).toEqual(spiked.sort());
+    expect(
+      cuts.every((c) => c.minute === 6 && (c.side === "high" ? c.reported > c.limit : c.reported < c.limit)),
+    ).toBe(true);
+    expect([on.summary.badTickFilter, on.summary.outcomes?.badTicks]).toEqual(["on", cuts.length]);
+    expect([off.summary.badTickFilter, off.summary.outcomes?.badTicks]).toEqual(["off", 0]);
+    expect(off.results.flatMap((r) => r.badTicks ?? [])).toEqual([]);
+    // Unfiltered, a spike decides the trade at minute 6; filtered, never.
+    const atSpike = (records: readonly TradeRecord[]) =>
+      records.filter((r) => r.exitMinute === 6 && spiked.includes(`${r.session} ${r.symbol}`)).length;
+    expect(atSpike(off.records)).toBeGreaterThan(0);
+    expect(atSpike(on.records)).toBe(0);
+  });
+});
+
 describe("progress", () => {
   it("reports the screen warming up on months before the first session, then every session", async () => {
     const progress: RunProgress[] = [];
@@ -351,6 +382,7 @@ describe("blind", () => {
     const blind = await collect(testConfig({ blind: true }));
     expect(blind.records).toEqual([]);
     expect(blind.fills).toEqual([]);
+    expect(blind.results.every((r) => r.badTicks === null)).toBe(true);
     expect(blind.results.map((r) => r.stats)).toEqual(open.results.map((r) => r.stats));
     expect(blind.summary.outcomes).toBeNull();
     const { outcomes: _open, elapsedMs: _a, blind: _b, ...rest } = open.summary;

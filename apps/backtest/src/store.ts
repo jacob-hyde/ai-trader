@@ -117,8 +117,9 @@ export class RunStore {
       const { stats } = result;
       await client.query(
         `INSERT INTO backtest_sessions
-           (run_id, session, eligible, qualified, in_play, unrankable, unrankable_symbols, signals, by_variant)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+           (run_id, session, eligible, qualified, in_play, unrankable, unrankable_symbols, signals, by_variant,
+            bad_ticks, corrupt_symbols)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
         [
           id,
           stats.session,
@@ -129,6 +130,8 @@ export class RunStore {
           JSON.stringify(stats.unrankableSymbols),
           stats.signals,
           JSON.stringify(stats.byVariant),
+          result.badTicks === null ? null : JSON.stringify(result.badTicks),
+          JSON.stringify(stats.corruptSymbols),
         ],
       );
       // prettier-ignore

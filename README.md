@@ -51,7 +51,8 @@ pnpm backtest status [<run id>]
 ```
 
 Every run takes the pre-registration's excluded sessions out of its calendar, and refuses holdout sessions
-until a frozen configuration is committed to `Docs/Pre-Registration.md`. `--blind` runs everything and keeps
+until a frozen configuration is committed to `Docs/Pre-Registration.md`. The bad-tick filter (H.8) judges
+every minute bar before the simulated broker sees it; `badTicks: null` in a configuration turns it off. `--blind` runs everything and keeps
 nothing after 09:35: timing and signal-time counts only, no trade, fill, or R.
 
 ## Modes

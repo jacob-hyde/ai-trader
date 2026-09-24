@@ -189,6 +189,67 @@ describe("the ranking", () => {
   });
 });
 
+describe("corrupted days", () => {
+  it("leaves a symbol-session the filter cuts more than 5 times out whole: unranked, and gone from every lookback", async () => {
+    // BAD's session 14 trades at two levels, a phantom $63.60 high every other minute, and its daily bar
+    // closes at a phantom $150. TWIN is BAD without that day at all.
+    const good = { close: 20, opening: 1_000 };
+    const bad = series("BAD", new Map([...steady(0, 15, { close: 20 }, { index: 15, opening: 1_000 })]));
+    const corruptDay = 14;
+    bad.daily = bad.daily.map((d) =>
+      d.session === at(corruptDay) ? { ...d, close: px(150), high: px(150) } : d,
+    );
+    bad.minute = [
+      ...bad.minute.filter((b) => b.session !== at(corruptDay)),
+      ...Array.from({ length: 12 }, (_, m) => ({
+        symbol: "BAD",
+        session: at(corruptDay),
+        minuteOfSession: m,
+        open: px(20),
+        high: px(m % 2 === 0 ? 20.1 : 63.6),
+        low: px(19.9),
+        close: px(20),
+        volume: 1_000,
+        vwap: null,
+        closed: true,
+      })),
+    ];
+    const twin = series(
+      "TWIN",
+      new Map(
+        [...steady(0, 15, { close: 20 }, { index: 15, opening: 1_000 })].filter(([i]) => i !== corruptDay),
+      ),
+    );
+    const { universe: u } = universe([bad, twin, series("OK", steady(0, 15, good))]);
+
+    const onTheDay = await u.plan(at(corruptDay));
+    expect(onTheDay.corrupt).toEqual(["BAD"]);
+    expect(names(onTheDay)).not.toContain("BAD");
+
+    // The next day BAD looks back past its phantom $150 close, exactly as TWIN does.
+    const after = await u.plan(at(15));
+    const [badName, twinName] = ["BAD", "TWIN"].map((symbol) =>
+      after.inPlay.find((n) => n.symbol === symbol),
+    );
+    expect(badName).toBeDefined();
+    expect({ ...badName, symbol: "TWIN", rank: 0 }).toEqual({ ...twinName, rank: 0 });
+    expect(after.corrupt).toEqual([]);
+  });
+
+  it("finds nothing corrupted with the filter off, and lets a day with a few cuts through", async () => {
+    const spiky = series("SPIKY", steady(0, 14, { close: 20 }, { index: 14, opening: 1_000 }));
+    spiky.minute = spiky.minute.map((b) =>
+      b.session === at(14) && b.minuteOfSession < 2 ? { ...b, high: px(30) } : b,
+    );
+    const on = universe([spiky]);
+    expect((await on.universe.plan(at(14))).corrupt).toEqual([]);
+    const source = new MemoryStudySource({ dailyBars: spiky.daily, minuteBars: spiky.minute });
+    const off = new StudyUniverse(source, { ...rulesFor(testConfig({ badTicks: null })) }, DATES, at(0));
+    expect((await off.plan(at(14))).corrupt).toEqual([]);
+    expect(source.calls.some((call) => call.startsWith("wideWickSessions"))).toBe(false);
+  });
+});
+
 describe("splits", () => {
   // A 2:1 split at the open of session 17. Before it the stock traded at $40 on half the shares.
   const SPLIT = 17;
@@ -258,12 +319,16 @@ describe("walking the calendar", () => {
       await u.plan(hours.session);
     }
     // Twenty sessions before 2026-03-02 is early February, so January's opening minutes are never read.
+    // Every month is checked for corrupted days, since a corrupted day leaves every lookback it sits in.
     expect(source.calls).toEqual([
       "dailyBars 2026-01",
+      "wideWickSessions 2026-01",
       "dailyBars 2026-02",
       "openingVolumes 2026-02",
+      "wideWickSessions 2026-02",
       "dailyBars 2026-03",
       "openingVolumes 2026-03",
+      "wideWickSessions 2026-03",
     ]);
   });
 
