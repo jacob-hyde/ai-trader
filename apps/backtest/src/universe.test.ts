@@ -154,7 +154,7 @@ describe("the ranking", () => {
     ]);
   });
 
-  it("reports an eligible name it has nothing to rank on, and never guesses", async () => {
+  it("reports a name that traded today but has nothing to rank on, and never guesses", async () => {
     const day = { close: 20 };
     const { universe: u } = universe(
       [
@@ -168,15 +168,23 @@ describe("the ranking", () => {
         ),
         // Loaded, and nothing traded in the opening minutes of any lookback session.
         series("QUIET", steady(0, 21, { ...day, opening: 0 }, { index: 21, opening: 1_000 })),
+        // Traded today, and February's minute bars were never loaded.
+        series(
+          "TODAY",
+          new Map([...steady(0, 21, day)].map(([i, d]) => [i, i >= 20 ? { ...d, opening: null } : d])),
+        ),
+        // Stopped trading after session 17, still inside its window, with no February minutes: gone, not a hole.
+        series("GONE", steady(0, 17, day)),
       ],
       { from: at(21) },
     );
     const plan = await u.plan(at(21));
-    expect(plan.eligible).toBe(3);
+    expect(plan.eligible).toBe(5);
     expect(names(plan)).toEqual(["OK"]);
     expect(plan.unrankable).toEqual([
       { symbol: "HOLE", reason: "minutesNotLoaded" },
       { symbol: "QUIET", reason: "baselineEmpty" },
+      { symbol: "TODAY", reason: "minutesNotLoaded" },
     ]);
   });
 });

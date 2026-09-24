@@ -99,8 +99,9 @@ export interface InPlayName {
 }
 
 /**
- * Eligible, but with nothing to rank on: minute bars never loaded for the session's month or a lookback
- * session's, or a lookback that traded nothing in the opening minutes. Reported, never guessed at.
+ * Eligible and traded in the opening minutes, but with nothing to rank on: minute bars never loaded for
+ * the session's month or a lookback session's, or a lookback that traded nothing in the opening minutes.
+ * Reported, never guessed at.
  */
 export type UnrankableReason = "minutesNotLoaded" | "baselineEmpty";
 
@@ -307,10 +308,16 @@ export class StudyUniverse {
       }
       eligible += 1;
 
-      if (
-        !(this.#minuteMonths?.get(symbol)?.has(month) ?? false) ||
-        recent.some((day) => day.opening === null)
-      ) {
+      // With no opening volume today a name cannot qualify, whatever its baseline, so it is never
+      // unrankable. One that did not trade at all today (no daily bar, e.g. a ticker gone or renamed
+      // while still inside its window) has nothing to load and reads as zero. The ranking is the same
+      // either way; this only keeps "unrankable" meaning a real hole.
+      const monthLoaded = this.#minuteMonths?.get(symbol)?.has(month) ?? false;
+      const todayVolume = monthLoaded ? (opening?.get(symbol) ?? 0) : today.has(symbol) ? null : 0;
+      if (todayVolume === 0) {
+        continue;
+      }
+      if (todayVolume === null || recent.some((day) => day.opening === null)) {
         unrankable.push({ symbol, reason: "minutesNotLoaded" });
         continue;
       }
@@ -322,8 +329,7 @@ export class StudyUniverse {
         unrankable.push({ symbol, reason: "baselineEmpty" });
         continue;
       }
-      const todayVolume = BigInt(opening?.get(symbol) ?? 0);
-      const openingRvol = ratio(Number((todayVolume * BigInt(L) * 10_000n) / baseline));
+      const openingRvol = ratio(Number((BigInt(todayVolume) * BigInt(L) * 10_000n) / baseline));
       if (openingRvol > rules.minOpeningRvol) {
         qualified.push({ symbol, openingRvol, dailyAtr, priorClose, averageVolume: volume / L });
       }
