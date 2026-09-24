@@ -1,6 +1,16 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { type NullModelReport, combinedVerdict, runNullModel, standingNullModel } from "@trader/core";
+import {
+  MIN_TRADES,
+  NULL_MODEL_EXITS,
+  NULL_MODEL_GATE_PATHS,
+  type NullModelReport,
+  combinedVerdict,
+  orbParamsSchema,
+  ratio,
+  runNullModel,
+  standingNullModel,
+} from "@trader/core";
 import { config as loadDotenv } from "dotenv";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -12,6 +22,7 @@ import {
   nullModelStanding,
   runNullModelGate,
 } from "./nullModel.js";
+import { loadRegistration } from "./registration.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 loadDotenv({ path: path.resolve(here, "../../../.env") });
@@ -42,6 +53,37 @@ describe("the null-model gate", () => {
 
   it("runs without hooks", async () => {
     expect((await runNullModelGate(40)).verdict).toBe("insufficient");
+  });
+});
+
+describe("the gate against the registration (Amendment 5)", () => {
+  it("runs what section 11 registers: paths, first seed, exits, trade minimum, and tolerance", async () => {
+    const registered = (await loadRegistration()).thresholds.nullModel;
+    expect(NULL_MODEL_GATE_PATHS).toBe(registered.paths);
+    expect(MIN_TRADES).toBe(registered.minTrades);
+    expect(NULL_MODEL_EXIT_IDS).toEqual(registered.exits);
+    for (const exit of NULL_MODEL_EXIT_IDS) {
+      const config = standingNullModel(exit);
+      expect(config.firstSeed).toBe(registered.firstSeed);
+      expect(config.grossToleranceR).toBe(registered.grossToleranceR);
+    }
+  });
+
+  it("tests the registered strategy: long only, its stop and exits, its cost gate, and its session cutoffs", async () => {
+    const { strategy } = (await loadRegistration()).thresholds;
+    expect(strategy.exits.map((exit) => exit.id)).toEqual(Object.keys(NULL_MODEL_EXITS));
+    for (const { id, ...exit } of strategy.exits) {
+      const config = standingNullModel(id as keyof typeof NULL_MODEL_EXITS);
+      expect(config.setupParams).toEqual({ stop: strategy.stop, exit });
+      const params = orbParamsSchema.parse(config.setupParams);
+      expect(params.allowShort).toBe(false);
+      expect(params.openingRangeMinutes).toBe(strategy.openingRangeMinutes);
+      expect(params.lastEntryMinute).toBe(390 - strategy.lastEntryMinutesBeforeClose);
+      expect(config.flattenMinute).toBe(390 - strategy.flattenMinutesBeforeClose);
+      expect(config.decision.costToRisk.maxCostToRisk).toBe(
+        ratio(Math.round(strategy.maxCostToRisk * 10_000)),
+      );
+    }
   });
 });
 

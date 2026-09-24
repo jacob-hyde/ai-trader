@@ -269,7 +269,7 @@ Re-promotion after any demotion or HALT needs a logged, 2FA-gated review, not ju
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "registered": "2026-09-22",
   "samples": {
     "inSample": { "from": "2016-01-04", "to": "2023-12-29", "firstTradable": "2016-01-25" },
@@ -307,6 +307,14 @@ Re-promotion after any demotion or HALT needs a logged, 2FA-gated review, not ju
     "familyAlpha": 0.05,
     "correction": "holm",
     "sided": "one"
+  },
+  "nullModel": {
+    "paths": 100000,
+    "firstSeed": 1,
+    "exits": ["A", "B"],
+    "minTrades": 200,
+    "grossToleranceR": 0.02,
+    "cleanCheckout": true
   },
   "inSampleGates": {
     "minTrades": 2000,
@@ -480,6 +488,39 @@ both eras (UGLD, USLV, MLPI, MEME, PCI) and are excluded whole.
 **What it changes at signal time.** A blind in-sample run with the list (nothing kept after 09:35):
 eligible names fall from 827 to 723 a session, with 39,241 signals and range-low gate passes of 20,802 (A)
 and 20,801 (B). Nothing after 09:35 was seen, and the list was built from names alone.
+### Amendment 5 (2026-09-24): what "the null model passes" means
+
+Section 3 makes a passing null model on the same commit a precondition for L.2, and section 10 stops the
+project when it fails for a reason other than a bug. Neither said what the run is or what passes. This
+fixes both before any L.2 run.
+
+**The run.** `pnpm backtest null-model`. The whole decision core (the ORB on its opening range, the
+cost-to-risk gate, sizing, the risk rules, the bracket builder, and the trade simulator under the default
+cost model) over 100,000 one-session driftless random walks, seeds 1 to 100,000: a volatile $20 name, 70
+bps of volatility a minute, a price move every second. It uses the range-low stop, and stops entries 30
+minutes and flattens 10 minutes before the close, as section 3 does. It runs once for each confirmatory
+exit, A and B, on the same paths. It takes no settings, so every run on a commit is the same run.
+
+**What passes.** For each exit: at least 200 trades, the lower bound of the 95% interval on mean gross R
+at or below +0.02R (no established edge on data that cannot have one), and mean gross R above mean net R
+(every fill was charged). Both exits must pass. Fewer than 200 trades is not a pass.
+
+**Which commit.** The latest null-model run from a clean checkout of the exact commit that produced the
+L.2 result. A run from a checkout with uncommitted changes is kept and counts for nothing, since its
+commit does not name the code that ran. `pnpm backtest status` shows the verdict next to every run.
+
+**Why exit B too.** The null model as D.4 built it ran only exit A. A target fills at its limit and a
+breakeven stop moves during the trade, so exit B has fill rules that exit A never reaches, and they had
+not been checked on random data. Measured while building this, on the definition above: exit A gross
+-0.0336R [-0.0672, +0.0001] and net -0.1445R; exit B gross +0.0088R [-0.0060, +0.0236] and net
+-0.1004R. Both pass. These are random walks, not study data.
+
+**What it does not cover.** It runs the decision core, not the L.1 runner. The runner is held to the same
+trade simulator trade for trade by its parity test, so a leak in the runner's own replay has to get past
+that test instead. At 100,000 paths the tripwire sees a leak of about a tenth of an R: the nightly run
+proves it catches a trigger decided from the breakout bar's own close. A smaller leak can pass.
+
+Section 11 carries this as `nullModel`, and its version is now 4.
 
 ## 13. Known limitations
 

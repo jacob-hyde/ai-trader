@@ -22,9 +22,9 @@ const withAddendum = (text: string) => `${REAL}\n### Addendum\n\n${text}\n`;
 const block = (value: unknown) => `\`\`\`json\n${JSON.stringify(value, null, 2)}\n\`\`\``;
 
 describe("the registration", () => {
-  it("reads section 11 of the committed file: version 3, 2022-03-08 out, the bad-tick filter, nothing frozen", async () => {
+  it("reads section 11 of the committed file: version 4, 2022-03-08 out, the bad-tick filter, the null model, nothing frozen", async () => {
     const registration = await loadRegistration();
-    expect(registration.thresholds.version).toBe(3);
+    expect(registration.thresholds.version).toBe(4);
     expect(registration.thresholds.samples).toEqual({
       inSample: { from: "2016-01-04", to: "2023-12-29", firstTradable: "2016-01-25" },
       holdout: { from: "2024-01-02", to: "2026-08-31" },
@@ -32,6 +32,14 @@ describe("the registration", () => {
       badTicks: { maxExcursion: 0.2, maxExcursionRanges: 10, rangeBars: 30, maxCutsPerSession: 5 },
     });
     expect(registration.thresholds.strategy.topN).toBe(20);
+    expect(registration.thresholds.nullModel).toEqual({
+      paths: 100_000,
+      firstSeed: 1,
+      exits: ["A", "B"],
+      minTrades: 200,
+      grossToleranceR: 0.02,
+      cleanCheckout: true,
+    });
     expect(registration.frozen).toBeNull();
     expect(registration.sha256).toMatch(/^[0-9a-f]{64}$/);
   });
@@ -46,11 +54,17 @@ describe("the registration", () => {
   it("refuses a malformed registration rather than guessing", () => {
     expect(() => parseRegistration("# nothing")).toThrow(/no section 11/);
     expect(() => parseRegistration("## 11. Thresholds\n\nnone")).toThrow(/no json block/);
-    expect(() => parseRegistration(REAL.replace('"version": 3', '"version": "three"'))).toThrow(
+    // Each replacement must hit the real file, or the case tests nothing.
+    const broken = (from: string, to: string): string => {
+      expect(REAL).toContain(from);
+      return REAL.replace(from, to);
+    };
+    expect(() => parseRegistration(broken('"version": 4', '"version": "four"'))).toThrow(
       /section 11: version/,
     );
-    expect(() => parseRegistration(REAL.replace('"version": 3,', '"version": 3,,'))).toThrow(
-      /not valid JSON/,
+    expect(() => parseRegistration(broken('"version": 4,', '"version": 4,,'))).toThrow(/not valid JSON/);
+    expect(() => parseRegistration(broken('"cleanCheckout": true', '"cleanCheckout": false'))).toThrow(
+      /section 11: nullModel/,
     );
     const frozen = { frozenConfiguration: testConfig() };
     expect(() => parseRegistration(withAddendum(`${block(frozen)}\n\n${block(frozen)}`))).toThrow(
@@ -127,7 +141,7 @@ describe("the pre-registered configuration", () => {
     };
     const config = preregisteredConfig(registration, { blind: true });
     expect(config).toMatchObject({
-      name: "L.2 in-sample, registration v3",
+      name: "L.2 in-sample, registration v4",
       from: "2016-01-04",
       to: "2023-12-29",
       universe: {
