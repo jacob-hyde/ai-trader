@@ -7,6 +7,7 @@
  *   pnpm bars universe                 which symbol-months pass the liquidity screen (prints, loads nothing)
  *   pnpm bars minute --universe        minute bars for those symbol-months
  *   pnpm bars minute --symbols A,B     or for named symbols, every month in the range
+ *   pnpm bars minute --units f         or exactly the symbol-months a file lists, one "SYMBOL YYYY-MM" a line
  *   pnpm bars verify                   coverage against the calendar, gaps listed
  *   pnpm bars compress                 compress now rather than waiting for the policy (table owner)
  *   pnpm bars analyze                  refresh the planner's statistics on the load's tables (table owner)
@@ -14,6 +15,7 @@
  *   pnpm bars all                      calendar, symbols, daily, minute --universe, verify, compress
  *
  * Every load resumes: run it again and it fetches only the symbol-months without a complete checkpoint.
+ * A file path is taken relative to where pnpm was run.
  * --from and --to take a month or a date (default 2016-01 through today). Loads connect as the engine
  * role (DATABASE_URL). The table owner (MIGRATION_DATABASE_URL) is needed to compress, by the compress
  * command and by the minute load as each month finishes, and to analyze, which every load does when it
@@ -70,6 +72,23 @@ function flags(argv: readonly string[]): Map<string, string> {
 }
 
 const log = (line: string): void => console.log(`[bars] ${line}`);
+
+/** pnpm runs this from data/, so a path the caller typed is relative to where they ran pnpm. */
+function fromCaller(file: string): string {
+  return path.resolve(process.env["INIT_CWD"] ?? process.cwd(), file);
+}
+
+/** "SYMBOL YYYY-MM" a line, or "SYMBOL|YYYY-MM". Blank lines and anything after a # are ignored. */
+function unitsFromFile(file: string): Unit[] {
+  return readFileSync(fromCaller(file), "utf8")
+    .split("\n")
+    .map((line) => (line.split("#")[0] ?? "").trim())
+    .filter((line) => line.length > 0)
+    .map((line) => {
+      const [symbol = "", month = ""] = line.split(/[\s|]+/);
+      return { symbol: symbol.toUpperCase(), month: monthOf(month) };
+    });
+}
 
 const quiet: Logger = {
   debug: () => undefined,
@@ -135,7 +154,7 @@ async function symbols(): Promise<void> {
   }
   const file = options.get("file");
   if (file !== undefined) {
-    added = await store.addSymbols(fromFile(readFileSync(file, "utf8"), path.basename(file)));
+    added = await store.addSymbols(fromFile(readFileSync(fromCaller(file), "utf8"), path.basename(file)));
     log(`symbols: ${String(added)} new from ${file}`);
   }
   log(`symbols: ${String((await store.allSymbols()).length)} tickers on the list`);
@@ -330,8 +349,10 @@ try {
         ok = await minute(await universe());
       } else if (named !== null) {
         ok = await minute(unitsFor(named));
+      } else if (options.has("units")) {
+        ok = await minute(unitsFromFile(options.get("units") as string));
       } else {
-        throw new Error("minute needs --universe or --symbols");
+        throw new Error("minute needs --universe, --symbols, or --units");
       }
       await analyze();
       break;
