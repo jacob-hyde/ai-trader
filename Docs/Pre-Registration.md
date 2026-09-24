@@ -269,12 +269,13 @@ Re-promotion after any demotion or HALT needs a logged, 2FA-gated review, not ju
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "registered": "2026-09-22",
   "samples": {
     "inSample": { "from": "2016-01-04", "to": "2023-12-29", "firstTradable": "2016-01-25" },
     "holdout": { "from": "2024-01-02", "to": "2026-08-31" },
-    "excludedSessions": ["2022-03-08"]
+    "excludedSessions": ["2022-03-08"],
+    "badTicks": { "maxExcursion": 0.2, "maxExcursionRanges": 10, "rangeBars": 30, "maxCutsPerSession": 5 }
   },
   "strategy": {
     "setup": "orb",
@@ -411,6 +412,47 @@ unrankable are 27 symbol-sessions whose lookback traded nothing in the opening m
 to rank on.
 
 Neither was informed by any result: the blind runs produce none.
+
+### Amendment 3 (2026-09-23): the bad-tick filter
+
+Section 3 requires the H.8 bad-tick filter between the store and the broker. This fixes what it does,
+before any L.2 run, since its thresholds decide which prints can fill an entry, a stop, or a target.
+
+**The rule.** Every minute bar is judged before the broker or the engine sees it, on itself and the bars
+before it that session only. A high or low that reaches past both the bar's body (its open and close)
+and the last close by more than 20%, or by more than 10 times the symbol's average minute range over its
+last 30 bars that session if that is further, is a bad print, and is cut back to the body. Open, close,
+and volume are never changed, so a gap, a halt reopening, or a squeeze that moves the body passes.
+
+**Corrupted days.** A symbol-session the filter cuts more than 5 times cannot be trusted at all: its good
+and bad prints share bars, so its opens and closes are suspect too. It is left out whole, as if the
+symbol had not traded that day: no signal, and skipped in every lookback, the way Amendment 1 treats
+2022-03-08 but for one name. The rule is applied the same way to both samples, with no hand-made list.
+
+**Why these numbers.** Tuned on the in-sample minute bars of liquid $5 to $100 names, by looking at the
+bars alone, never at a trade. At 10% the filter cut 154 bars, and in about a third of them the next bar
+traded right back there: real squeezes (AMC in January 2021, SN, SHPH), the very names that rank in
+play. At 20% it cuts 10 bars in eight years outside one corrupted day: BBBY's $123.45 prints on a $40
+stock, the opening prints of the 2023-01-24 NYSE auction fault (NCLH, NLY, T), and a few one-offs. At
+25% the 2023-01-24 prints get through. The corrupted day is JWN on 2018-03-26, which traded at $46.90
+and at a phantom $63.60 all day, its daily bar included. It is the only in-sample symbol-session, of any
+name, that the filter cuts more than 5 times.
+
+**How it runs.** Finding corrupted days means judging whole sessions, so the whole minute store, both
+samples, was scanned once for bars with a wick more than 9% past the body (`pnpm bars suspects`). Only
+those symbol-sessions can be cut, so a run counts cuts in them alone to find the corrupted days. The scan
+reads bars, never a trade; for the holdout it is the only look at its data, and it is the same rule for
+both samples. A month loaded after its scan is refused until it is scanned again.
+
+**What it cannot catch.** A bar that is bad from open to close with no wick past the limit. Nothing
+inside the bar disagrees with it, and only the next bar could, which would be look-ahead. Its day is
+left out only if the filter cuts it more than 5 times.
+
+A blind in-sample run with the filter on (as Amendment 2's, nothing kept after 09:35) left out that one
+symbol-session, and the signal-time counts barely moved: 39,175 signals as before, and range-low gate
+passes of 19,708 (A) and 19,707 (B), one fewer each.
+
+Section 11 carries the thresholds as `samples.badTicks`, and its version is now 3.
 
 ## 13. Known limitations
 

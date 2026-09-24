@@ -31,6 +31,13 @@ const thresholdsSchema = z
       inSample: z.object({ from: sessionDate, to: sessionDate, firstTradable: sessionDate }),
       holdout: z.object({ from: sessionDate, to: sessionDate }),
       excludedSessions: z.array(sessionDate),
+      // The bad-tick filter between the store and the broker, and when a symbol-session is corrupted.
+      badTicks: z.object({
+        maxExcursion: z.number(),
+        maxExcursionRanges: z.number().int(),
+        rangeBars: z.number().int(),
+        maxCutsPerSession: z.number().int(),
+      }),
     }),
     strategy: z.object({
       setup: z.literal("orb"),
