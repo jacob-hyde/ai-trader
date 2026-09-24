@@ -371,4 +371,42 @@ describe("the Alpaca source", () => {
     await expect(read(source(400, "invalid timeframe"))).rejects.not.toBeInstanceOf(InvalidSymbolError);
     await expect(read(source(403, "invalid symbol: X"))).rejects.toThrow("403");
   });
+
+  // Survivorship (L.6): a universe built from today's listings alone would never hold a name that
+  // failed, so the ticker list asks for the delisted ones too.
+  it("lists inactive assets as well as active ones", async () => {
+    const asked: string[] = [];
+    const listing = alpacaSource(
+      new AlpacaClient({
+        keyId: "k",
+        secretKey: "s",
+        tradingUrl: "https://paper-api.example",
+        maxAttempts: 1,
+        fetch: ((url: string | URL) => {
+          const status = new URL(String(url)).searchParams.get("status") ?? "";
+          asked.push(status);
+          const body = [
+            {
+              id: status,
+              class: "us_equity",
+              exchange: "NYSE",
+              symbol: status === "active" ? "LIVE" : "GONE",
+              name: "x",
+              status,
+              tradable: status === "active",
+              marginable: false,
+              shortable: false,
+              easy_to_borrow: false,
+              fractionable: false,
+              attributes: null,
+            },
+          ];
+          return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
+        }) as typeof fetch,
+      }),
+    );
+    const assets = await listing.assets();
+    expect(asked.sort()).toEqual(["active", "inactive"]);
+    expect(assets.map((a) => `${a.symbol} ${a.status}`).sort()).toEqual(["GONE inactive", "LIVE active"]);
+  });
 });

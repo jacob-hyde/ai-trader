@@ -69,6 +69,15 @@ export interface RunHooks {
   readonly onSession?: (result: SessionResult) => void | Promise<void>;
 }
 
+/** One calendar year of a variant's filled trades whose gate passed. */
+export interface YearOutcome {
+  readonly year: number;
+  readonly trades: number;
+  readonly meanNetR: Ratio | null;
+  /** Sum of net R, in basis points of R. */
+  readonly totalNetR: number;
+}
+
 /** Per variant and direction, over filled trades whose gate passed. A sanity check, not the verdict (L.2). */
 export interface VariantOutcome {
   readonly variant: string;
@@ -78,6 +87,11 @@ export interface VariantOutcome {
   readonly filled: number;
   readonly meanNetR: Ratio | null;
   readonly meanGrossR: Ratio | null;
+  /**
+   * Year by year, oldest first, only years with a trade. Every ORB run reports it (L.6): an edge that
+   * lives in one regime shows here before any verdict is read.
+   */
+  readonly byYear: readonly YearOutcome[];
 }
 
 export interface RunSummary {
@@ -162,7 +176,10 @@ export async function runBacktest(
     corrupt: 0,
   };
   const gatePassed = new Map(config.variants.map((variant) => [variant.id, 0]));
-  const outcomes = new Map<string, { signals: number; gatePassed: number; net: number[]; gross: number[] }>();
+  const outcomes = new Map<
+    string,
+    { signals: number; gatePassed: number; net: number[]; gross: number[]; years: Map<number, number[]> }
+  >();
   let sessionsDone = 0;
 
   let engine: BacktestEngine | null = null;
@@ -197,13 +214,21 @@ export async function runBacktest(
       if (!config.blind) {
         for (const record of output.records) {
           const key = `${record.variant}|${record.direction}`;
-          const tally = outcomes.get(key) ?? { signals: 0, gatePassed: 0, net: [], gross: [] };
+          const tally = outcomes.get(key) ?? {
+            signals: 0,
+            gatePassed: 0,
+            net: [],
+            gross: [],
+            years: new Map<number, number[]>(),
+          };
           outcomes.set(key, tally);
           tally.signals += 1;
           tally.gatePassed += record.gatePassed ? 1 : 0;
           if (record.gatePassed && record.netR !== null && record.grossR !== null) {
             tally.net.push(record.netR);
             tally.gross.push(record.grossR);
+            const year = Number(record.session.slice(0, 4));
+            (tally.years.get(year) ?? tally.years.set(year, []).get(year))?.push(record.netR);
           }
         }
       }
@@ -259,6 +284,14 @@ export async function runBacktest(
                   filled: tally.net.length,
                   meanNetR: mean(tally.net),
                   meanGrossR: mean(tally.gross),
+                  byYear: [...tally.years]
+                    .sort(([a], [b]) => a - b)
+                    .map(([year, net]) => ({
+                      year,
+                      trades: net.length,
+                      meanNetR: mean(net),
+                      totalNetR: net.reduce((sum, r) => sum + r, 0),
+                    })),
                 };
               }),
           },
