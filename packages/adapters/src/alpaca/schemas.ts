@@ -342,6 +342,11 @@ export const quotesPageSchema = z.object({
   next_page_token: pageToken,
 });
 
+export const tradesPageSchema = z.object({
+  trades: nullish(z.record(z.array(tradeSchema))).transform((trades) => trades ?? {}),
+  next_page_token: pageToken,
+});
+
 export const latestQuotesSchema = z.object({ quotes: z.record(quoteSchema) });
 
 export const mostActivesSchema = z.object({

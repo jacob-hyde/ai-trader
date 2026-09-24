@@ -41,6 +41,7 @@ import {
   type AlpacaQuote,
   type AlpacaSnapshot,
   type AlpacaTimeframe,
+  type AlpacaTrade,
   accountSchema,
   assetSchema,
   barsPageSchema,
@@ -57,6 +58,7 @@ import {
   positionSchema,
   quotesPageSchema,
   snapshotsSchema,
+  tradesPageSchema,
 } from "./schemas.js";
 import { TradeUpdatesStream } from "./tradeUpdatesStream.js";
 
@@ -200,8 +202,13 @@ export interface QuotesRequest {
   readonly limit?: number;
   readonly feed?: AlpacaFeed;
   readonly sort?: "asc" | "desc";
+  /** Which date's tickers the symbols mean, as for bars. "-" for what traded under each at the time. */
+  readonly asof?: string;
   readonly pageToken?: string;
 }
+
+/** Historical trades take the same query as quotes. */
+export type TradesRequest = QuotesRequest;
 
 export interface NewsRequest {
   readonly symbols?: readonly string[];
@@ -414,9 +421,33 @@ export class AlpacaMarketDataApi {
       limit: request.limit,
       feed: request.feed ?? this.#feed,
       sort: request.sort,
+      asof: request.asof,
       page_token: request.pageToken,
     });
     return { items: page.quotes, nextPageToken: page.next_page_token };
+  }
+
+  /** Every trade print in the range, per symbol, in time order unless sorted otherwise. */
+  async getTradesPage(
+    request: TradesRequest,
+  ): Promise<Page<Readonly<Record<string, readonly AlpacaTrade[]>>>> {
+    const page = await this.#rest.get("/v2/stocks/trades", tradesPageSchema, {
+      symbols: request.symbols,
+      start: request.start,
+      end: request.end,
+      limit: request.limit,
+      feed: request.feed ?? this.#feed,
+      sort: request.sort,
+      asof: request.asof,
+      page_token: request.pageToken,
+    });
+    return { items: page.trades, nextPageToken: page.next_page_token };
+  }
+
+  async *iterateTrades(
+    request: TradesRequest,
+  ): AsyncGenerator<Page<Readonly<Record<string, readonly AlpacaTrade[]>>>> {
+    yield* paginate(request.pageToken, (pageToken) => this.getTradesPage({ ...request, ...pageToken }));
   }
 
   async *iterateQuotes(

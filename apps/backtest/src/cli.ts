@@ -16,6 +16,9 @@
  *   pnpm backtest l2 in-sample                       the pre-registered in-sample run, its verdict, section 7
  *   pnpm backtest l2 verdict <run id>                that verdict again for a run, from what it kept
  *   pnpm backtest l2 holdout                         the frozen configuration on the holdout, once
+ *   pnpm backtest costs <run id> [--per-year n] [--seed s]
+ *                                                    prices a sample of a finished run's trades from
+ *                                                    the market's trades and quotes (costCheck.ts)
  *
  * L.2 runs only from a clean checkout whose commit the null model has passed on and that holds the ETF
  * list, and every report says whether its run met section 3's preconditions (l2.ts). The in-sample
@@ -37,11 +40,22 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { NULL_MODEL_EXITS, NULL_MODEL_GATE_PATHS, formatNullModelReport } from "@trader/core";
+import { AlpacaClient } from "@trader/adapters/alpaca";
 import { TimescaleReplaySource } from "@trader/data/replay";
 import { QueueEvents } from "bullmq";
 import { config as loadDotenv } from "dotenv";
 import pg from "pg";
+import { AlpacaTape } from "./alpacaTape.js";
 import { type RunConfig, canonical, costModelFor, parseRunConfig } from "./config.js";
+import {
+  type MeasuredTrade,
+  type Signal,
+  measureSignal,
+  renderCostReport,
+  sampleSignals,
+  summarize,
+} from "./costCheck.js";
+import { LATENCY_MS } from "./fills.js";
 import { diffRuns } from "./diff.js";
 import { fileInCommit, readGit } from "./git.js";
 import type { GitState } from "./guard.js";
@@ -64,6 +78,7 @@ import {
   runNullModelGate,
 } from "./nullModel.js";
 import { preregisteredConfig } from "./preregistered.js";
+import type { TradeRecord } from "./records.js";
 import { METRICS_REPORT, metricsReport, renderMetricsReport } from "./report.js";
 import {
   type BacktestJobResult,
@@ -83,7 +98,9 @@ loadDotenv({ path: path.join(REPO_ROOT, ".env") });
 
 const [command = "", ...rest] = process.argv.slice(2);
 const flags = new Set(rest.filter((arg) => arg.startsWith("--")));
-const positional = rest.filter((arg, i) => !arg.startsWith("--") && !rest[i - 1]?.match(/^--concurrency$/));
+const positional = rest.filter(
+  (arg, i) => !arg.startsWith("--") && !rest[i - 1]?.match(/^--(concurrency|per-year|seed)$/),
+);
 
 function option(name: string): string | undefined {
   const i = rest.indexOf(`--${name}`);
@@ -561,6 +578,82 @@ async function l2(): Promise<void> {
   });
 }
 
+function dataClient(): AlpacaClient {
+  return new AlpacaClient({
+    keyId: env("ALPACA_KEY_ID"),
+    secretKey: env("ALPACA_SECRET_KEY"),
+    tradingUrl: env("ALPACA_BASE_URL"),
+    dataUrl: process.env["ALPACA_DATA_URL"] ?? "https://data.alpaca.markets",
+    dataRequestsPerMinute: Number(process.env["ALPACA_DATA_RATE_LIMIT"] ?? 200),
+    feed: "sip",
+    timeoutMs: 60_000,
+  });
+}
+
+const COST_REPORT = "costs";
+
+async function costs(): Promise<void> {
+  const [id] = positional;
+  if (id === undefined) {
+    throw new Error("costs takes a run id");
+  }
+  const perYear = Number(option("per-year") ?? "50");
+  const seed = Number(option("seed") ?? "20260924");
+  const registration = await loadRegistration();
+  const exits = registration.thresholds.strategy.exits.map((exit) => exit.id);
+  const alpaca = dataClient();
+  try {
+    await withPool(async (pool) => {
+      const store = new RunStore(pool);
+      const run = await store.get(id);
+      if (run === null || run.blind || run.status !== "completed") {
+        throw new Error(`run ${id} is not a finished run with trades`);
+      }
+      // The confirmatory trades, grouped by signal: every exit on one entry.
+      const bySignal = new Map<string, Record<string, TradeRecord>>();
+      for (const t of await store.trades(id)) {
+        if (
+          exits.includes(t.variant) &&
+          t.direction === "long" &&
+          t.gatePassed &&
+          t.entryOutcome === "filled"
+        ) {
+          const key = `${t.session} ${t.symbol}`;
+          (bySignal.get(key) ?? bySignal.set(key, {}).get(key) ?? {})[t.variant] = t;
+        }
+      }
+      const opens = new Map(
+        (
+          await pool.query<{ session: string; open_ms: string }>(
+            "SELECT session::text AS session, (extract(epoch FROM open_at) * 1000)::bigint AS open_ms FROM market_sessions",
+          )
+        ).rows.map((row) => [row.session, Number(row.open_ms)]),
+      );
+      const signals: Signal[] = [...bySignal].map(([key, trades]) => {
+        const [session = "", symbol = ""] = key.split(" ");
+        return { session, symbol, openAt: opens.get(session) ?? Number.NaN, trades };
+      });
+      const sample = sampleSignals(signals, perYear, seed);
+      console.log(`pricing ${String(sample.length)} of ${String(signals.length)} signals from the market`);
+      const tape = new AlpacaTape(alpaca);
+      const measured: MeasuredTrade[] = [];
+      for (const signal of sample) {
+        measured.push(await measureSignal(tape, signal));
+        if (measured.length % 25 === 0) {
+          console.log(`  ${String(measured.length)} of ${String(sample.length)}`);
+        }
+      }
+      const settings = { runId: id, perYear, seed, latencyMs: LATENCY_MS };
+      const summary = summarize(measured);
+      const text = renderCostReport(settings, summary);
+      await store.saveReport(id, COST_REPORT, { settings, summary, measured }, text, await readGit());
+      console.log(text);
+    });
+  } finally {
+    await alpaca.close();
+  }
+}
+
 const commands: Record<string, () => Promise<void>> = {
   worker,
   submit,
@@ -571,11 +664,12 @@ const commands: Record<string, () => Promise<void>> = {
   config,
   "null-model": nullModel,
   l2,
+  costs,
 };
 const chosen = commands[command];
 if (chosen === undefined) {
   console.log(
-    "usage: pnpm backtest worker | submit <config.json> | run <config.json> | status [<run id>] | diff <a> <b> | report <run id> | config preregistered | null-model | l2 in-sample | l2 verdict <run id> | l2 holdout",
+    "usage: pnpm backtest worker | submit <config.json> | run <config.json> | status [<run id>] | diff <a> <b> | report <run id> | config preregistered | null-model | l2 in-sample | l2 verdict <run id> | l2 holdout | costs <run id>",
   );
   process.exitCode = 1;
 } else {
