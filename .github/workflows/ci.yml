@@ -22,9 +22,20 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
+      # The backtest queue (L.1).
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     env:
       MIGRATION_DATABASE_URL: postgres://trader:trader@localhost:5432/trader
       DATABASE_URL: postgres://trader_engine:trader_engine@localhost:5432/trader
+      REDIS_URL: redis://localhost:6379
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

@@ -14,6 +14,11 @@
  * open exits at its symbol's last close. The report lists both, since a day-trading run that needs the
  * forced exit has an engine bug.
  *
+ * The adapter also raises the replay's own clock (ReplayEvents): a session starting, every minute
+ * closing whether or not any symbol printed in it, and the close. An engine that acts on time, such as
+ * cancelling entries at 15:30 or flattening at 15:50, listens to that. A live engine uses a wall clock
+ * for the same thing, and a thin name that skips a minute must not make either one late.
+ *
  * Nothing in it is random, so there is no seed to set: the same store, range, and engine give the
  * same events, whatever the database's timing. Reads of the store run in parallel, but every call the
  * engine makes is answered in the order it was made, and the replay waits for all of them before the
@@ -77,6 +82,23 @@ export interface BacktestAdapterConfig {
   readonly costModel: CostModelConfig;
   readonly startingCash: Fixed;
 }
+
+/** The replay's clock. Raised by BacktestAdapter, in this order, around every session. */
+export type ReplayEvents = {
+  /** A session's bars are loaded and its first minute is next. `minutes` is its length: 390, or 210 on a half day. */
+  sessionStart: { readonly hours: SessionHours; readonly minutes: number };
+  /**
+   * A minute has closed: its bars reached the broker and went out as events. Raised for every minute
+   * of the session, bars or none, before the replay waits on the engine.
+   */
+  minute: { readonly session: SessionDate; readonly minuteOfSession: number; readonly minutes: number };
+  /** The close: what the broker closed and expired there (SimulatedExecution.endSession). */
+  sessionEnd: {
+    readonly hours: SessionHours;
+    readonly closed: readonly Order[];
+    readonly expired: readonly Order[];
+  };
+};
 
 export interface MissingBars {
   readonly session: SessionDate;
@@ -520,7 +542,7 @@ export class BacktestDataAdapter extends Emitter<DataEvents> implements DataAdap
   }
 }
 
-export class BacktestAdapter implements Adapter {
+export class BacktestAdapter extends Emitter<ReplayEvents> implements Adapter {
   readonly mode: RunMode = "backtest";
   readonly data: BacktestDataAdapter;
   readonly execution: SimulatedExecution;
@@ -542,6 +564,7 @@ export class BacktestAdapter implements Adapter {
   }
 
   private constructor(config: BacktestAdapterConfig, sessions: readonly SessionHours[]) {
+    super();
     const first = sessions[0] as SessionHours;
     const clock = calendarClock(sessions);
     this.sessions = sessions;
@@ -606,12 +629,14 @@ export class BacktestAdapter implements Adapter {
         );
       }
       const minutes = Math.round((hours.closeAt - hours.openAt) / MINUTE);
+      this.emit("sessionStart", { hours, minutes });
       for (let minute = 0; minute < minutes; minute += 1) {
         const batch = this.data.advance(minute);
         for (const bar of batch) {
           this.execution.onBar(bar);
         }
         this.data.deliver(batch);
+        this.emit("minute", { session: hours.session, minuteOfSession: minute, minutes });
         bars += batch.length;
         await this.data.drain();
       }
@@ -619,6 +644,7 @@ export class BacktestAdapter implements Adapter {
       this.data.endSession();
       closed.push(...end.closed);
       expired.push(...end.expired);
+      this.emit("sessionEnd", { hours, closed: end.closed, expired: end.expired });
       await this.data.drain();
     }
     return {

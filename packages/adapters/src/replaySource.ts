@@ -61,15 +61,12 @@ const SAME_BASIS = 0.001;
  */
 export function restate(bar: StoredBar, asOf: number | null): SymbolBar {
   const { splitFactor, ...plain } = bar;
-  if (splitFactor === null || asOf === null) {
-    return plain;
-  }
-  const ratio = asOf / splitFactor;
-  if (Math.abs(ratio - 1) < SAME_BASIS) {
+  const ratio = basisRatio(splitFactor, asOf);
+  if (ratio === null) {
     return plain;
   }
   // Rounding is monotone, so low <= open, close <= high survives it.
-  const price = (units: Fixed): Fixed => fixed(Math.max(1, Math.round(units * ratio)));
+  const price = (units: Fixed): Fixed => restatePrice(units, ratio);
   return {
     ...plain,
     open: price(bar.open),
@@ -77,7 +74,53 @@ export function restate(bar: StoredBar, asOf: number | null): SymbolBar {
     low: price(bar.low),
     close: price(bar.close),
     vwap: bar.vwap === null ? null : price(bar.vwap),
-    volume: Math.round(bar.volume / ratio),
+    volume: restateVolume(bar.volume, ratio),
+  };
+}
+
+/**
+ * What restate multiplies a price by to move it from a session with factor `own` to the basis of
+ * `asOf`. Null when the two are the same basis or either factor is missing: the value stays as traded.
+ * For a caller restating many numbers without building bars, with restatePrice and restateVolume.
+ */
+export function basisRatio(own: number | null, asOf: number | null): number | null {
+  if (own === null || asOf === null) {
+    return null;
+  }
+  const ratio = asOf / own;
+  return Math.abs(ratio - 1) < SAME_BASIS ? null : ratio;
+}
+
+/** A price on another basis, never below one unit. `ratio` from basisRatio; null leaves it as traded. */
+export function restatePrice(units: Fixed, ratio: number | null): Fixed {
+  return ratio === null ? units : fixed(Math.max(1, Math.round(units * ratio)));
+}
+
+/** A volume on another basis: more shares after a split, fewer after a reverse split. */
+export function restateVolume(volume: number, ratio: number | null): number {
+  return ratio === null ? volume : Math.round(volume / ratio);
+}
+
+/**
+ * A replay source with some sessions taken out, as if the exchange had been closed on them. They leave
+ * the calendar, and no daily or minute bar of theirs comes back from a lookback, so a replay neither
+ * trades them nor counts them in an average. For a day the store holds but cannot be trusted, such as
+ * 2022-03-08 (Pre-Registration, Amendment 1).
+ *
+ * Split factors pass through: a factor says which share basis a date is on, and that is still true of
+ * a day taken out.
+ */
+export function withoutSessions(source: ReplaySource, excluded: readonly SessionDate[]): ReplaySource {
+  const out = new Set(excluded);
+  const keep = <T extends { readonly session: SessionDate }>(rows: readonly T[]): readonly T[] =>
+    rows.filter((row) => !out.has(row.session));
+  return {
+    sessions: async (from, to) => keep(await source.sessions(from, to)),
+    loaded: (session, symbols) => source.loaded(session, symbols),
+    sessionBars: async (hours, symbols) => (out.has(hours.session) ? [] : source.sessionBars(hours, symbols)),
+    dailyBars: async (symbol, from, to) => keep(await source.dailyBars(symbol, from, to)),
+    minuteBars: async (symbol, from, to) => keep(await source.minuteBars(symbol, from, to)),
+    splitFactor: (symbol, session) => source.splitFactor(symbol, session),
   };
 }
 

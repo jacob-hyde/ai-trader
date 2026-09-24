@@ -67,6 +67,13 @@ export interface SimulatedExecutionConfig {
   readonly start: { readonly session: SessionDate; readonly minuteOfSession: number };
 }
 
+/** What a fill acted at before costs, and which allowance priced it. */
+export interface FillBasis {
+  /** The trigger, the limit, the open of a gap, or the close a session ended on. */
+  readonly reference: Fixed;
+  readonly kind: FillKind;
+}
+
 /** What a close did: exits filled there, and entries that expired unfilled. */
 export interface SessionEnd {
   readonly closed: readonly Order[];
@@ -98,6 +105,8 @@ export class SimulatedExecution extends Emitter<ExecutionEvents> implements Exec
   readonly #brackets = new Map<string, Bracket>();
   /** Brackets with a working order or an open position, oldest first. What a bar has to look at. */
   readonly #active = new Map<string, Bracket>();
+  /** Every fill's pre-cost reference, by fill id. */
+  readonly #basis = new Map<string, FillBasis>();
   #cash: Fixed;
   #now: { session: SessionDate; minuteOfSession: number };
   #fillSequence = 0;
@@ -333,6 +342,15 @@ export class SimulatedExecution extends Emitter<ExecutionEvents> implements Exec
     });
   }
 
+  /**
+   * The price a fill acted at before the cost model, and the allowance it paid. A backtest measures
+   * gross R from these, reference to reference, next to net R from the fill prices. Undefined for a
+   * fill this broker never made.
+   */
+  fillBasis(fillId: string): FillBasis | undefined {
+    return this.#basis.get(fillId);
+  }
+
   /** Symbols with a working order or an open position, sorted. A replay must keep feeding their bars. */
   activeSymbols(): readonly string[] {
     return [...new Set([...this.#active.values()].map((bracket) => bracket.request.symbol))].sort();
@@ -539,8 +557,10 @@ export class SimulatedExecution extends Emitter<ExecutionEvents> implements Exec
       updatedAt: at,
     });
     this.#fillSequence += 1;
+    const id = `fill-${String(this.#fillSequence)}`;
+    this.#basis.set(id, { reference, kind });
     const fill: Fill = {
-      id: `fill-${String(this.#fillSequence)}`,
+      id,
       orderId: order.id,
       clientOrderId: order.clientOrderId,
       symbol: order.symbol,

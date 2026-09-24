@@ -28,6 +28,7 @@ import {
   type SessionHours,
   type StoredBar,
   restate,
+  withoutSessions,
 } from "./replaySource.js";
 
 const CASH = fixed(1_000_000_000);
@@ -218,6 +219,121 @@ describe("the replay", () => {
       ["bbb/entry", priced("buy", "market", 11), CLOCK("2026-01-05", 2)],
       ["bbb/flatten", priced("sell", "market", 11), CLOCK("2026-01-05", 3)],
     ]);
+  });
+});
+
+describe("the replay clock", () => {
+  it("ticks every minute of every session, bars or none, between the session's start and its close", async () => {
+    // AAA prints twice on the half day and never on the Monday after it. The clock ticks regardless.
+    const a = await connected(
+      source({ minuteBars: [bar("AAA", HALF, 0, [10, 10, 10, 10]), bar("AAA", HALF, 2, [10, 10, 10, 10])] }),
+      { from: "2026-11-27", to: "2026-11-30", universe: ["AAA"] },
+    );
+    await a.data.subscribe(["AAA"]);
+    const log: string[] = [];
+    let ticks = 0;
+    a.on("sessionStart", ({ hours, minutes }) => log.push(`start ${hours.session} ${String(minutes)}`));
+    a.data.on("bar", (b) => log.push(`bar ${b.session} ${String(b.minuteOfSession)}`));
+    a.on("minute", ({ session, minuteOfSession, minutes }) => {
+      ticks += 1;
+      if (minuteOfSession < 3 || minuteOfSession === minutes - 1) {
+        log.push(`minute ${session} ${String(minuteOfSession)}`);
+      }
+    });
+    a.on("sessionEnd", ({ hours, closed, expired }) =>
+      log.push(`end ${hours.session} ${String(closed.length)} ${String(expired.length)}`),
+    );
+    await a.replay();
+    expect(ticks).toBe(210 + 390);
+    expect(log).toEqual([
+      "start 2026-11-27 210",
+      "bar 2026-11-27 0",
+      "minute 2026-11-27 0",
+      "minute 2026-11-27 1",
+      "bar 2026-11-27 2",
+      "minute 2026-11-27 2",
+      "minute 2026-11-27 209",
+      "end 2026-11-27 0 0",
+      "start 2026-11-30 390",
+      "minute 2026-11-30 0",
+      "minute 2026-11-30 1",
+      "minute 2026-11-30 2",
+      "minute 2026-11-30 389",
+      "end 2026-11-30 0 0",
+    ]);
+  });
+
+  it("lets an engine act on a minute with no bars, and reports the close's exits and expiries", async () => {
+    // AAA goes quiet after minute 1. An engine timed by AAA's bars would never place the second order.
+    const a = await connected(
+      source({ minuteBars: [...flat("AAA", MON, 0, 2, 10), ...flat("BBB", MON, 0, 390, 20)] }),
+      { from: "2026-01-05", to: "2026-01-05", universe: ["AAA", "BBB"] },
+    );
+    a.on("minute", ({ minuteOfSession }) => {
+      if (minuteOfSession === 5) {
+        void a.execution.submitBracket(bracketFor("BBB", "bbb", { type: "market" }, 19));
+        void a.execution.submitBracket(bracketFor("AAA", "aaa", { type: "stop", stopPrice: px(11) }, 9));
+      }
+    });
+    const ends: string[] = [];
+    a.on("sessionEnd", ({ closed, expired }) => {
+      ends.push(...closed.map((o) => `closed ${o.id}`), ...expired.map((o) => `expired ${o.id}`));
+    });
+    const fills = fillsOf(a);
+    await a.replay();
+    // The market entry placed at minute 5 met BBB's minute 6.
+    expect(fills[0]?.at).toBe(CLOCK("2026-01-05", 6));
+    expect(ends).toEqual(["closed bbb/flatten", "expired aaa/entry"]);
+  });
+});
+
+describe("taking sessions out", () => {
+  const minuteBars = [
+    ...flat("AAA", MON, 0, 2, 10),
+    ...flat("AAA", TUE, 0, 2, 11),
+    ...flat("AAA", WED, 0, 2, 12),
+  ];
+  const dailyBars = [daily("AAA", MON, 10, 1), daily("AAA", TUE, 11, 2), daily("AAA", WED, 12, 2)];
+  const iso = (ms: number) => new Date(ms).toISOString();
+
+  it("drops them from the calendar and from every lookback, and keeps their split factors", async () => {
+    const out = withoutSessions(source({ minuteBars, dailyBars }), ["2026-01-06"]);
+    expect((await out.sessions("2026-01-01", "2026-01-31")).map((h) => h.session)).toEqual([
+      "2026-01-05",
+      "2026-01-07",
+    ]);
+    const range = [iso(MON.openAt), iso(WED.closeAt)] as const;
+    expect((await out.dailyBars("AAA", ...range)).map((b) => b.session)).toEqual([
+      "2026-01-05",
+      "2026-01-07",
+    ]);
+    expect([...new Set((await out.minuteBars("AAA", ...range)).map((b) => b.session))]).toEqual([
+      "2026-01-05",
+      "2026-01-07",
+    ]);
+    expect(await out.sessionBars(TUE, ["AAA"])).toEqual([]);
+    expect(await out.sessionBars(WED, ["AAA"])).toHaveLength(2);
+    expect(await out.loaded("2026-01-06", ["AAA"])).toEqual(new Set(["AAA"]));
+    // The split took effect on the day taken out. Wednesday is still on its basis.
+    expect(await out.splitFactor("AAA", "2026-01-07")).toBe(2);
+  });
+
+  it("replays as if the exchange had been closed that day", async () => {
+    const a = await BacktestAdapter.create({
+      source: withoutSessions(source({ minuteBars, dailyBars }), ["2026-01-06"]),
+      from: "2026-01-05",
+      to: "2026-01-07",
+      universe: ["AAA"],
+      costModel: DEFAULT_COST_MODEL,
+      startingCash: CASH,
+    });
+    await a.connect();
+    await a.data.subscribe(["AAA"]);
+    const sessions = new Set<string>();
+    a.data.on("bar", (b) => sessions.add(b.session));
+    const report = await a.replay();
+    expect(report.sessions).toBe(2);
+    expect([...sessions]).toEqual(["2026-01-05", "2026-01-07"]);
   });
 });
 

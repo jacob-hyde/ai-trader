@@ -1,0 +1,27 @@
+{
+  "name": "@trader/backtest",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "backtest": "tsx src/cli.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@trader/adapters": "workspace:*",
+    "@trader/contracts": "workspace:*",
+    "@trader/core": "workspace:*",
+    "@trader/data": "workspace:*",
+    "bullmq": "^6.3.8",
+    "dotenv": "^16.4.5",
+    "ioredis": "^6.0.0",
+    "pg": "^8.13.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.4",
+    "@types/pg": "^8.11.10",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.3"
+  }
+}

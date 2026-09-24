@@ -3,6 +3,13 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
+  "exports": {
+    "./replay": {
+      "types": "./src/replay/timescale.ts",
+      "import": "./src/replay/timescale.ts",
+      "default": "./src/replay/timescale.ts"
+    }
+  },
   "scripts": {
     "migrate": "tsx migrate.ts",
     "migrate:up": "tsx migrate.ts up",
