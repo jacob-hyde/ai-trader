@@ -53,6 +53,7 @@ pnpm bars symbols                  # the ticker list: asset list, corporate acti
 pnpm bars daily                    # daily bars for every ticker on the list
 pnpm bars universe                 # which symbol-months pass the liquidity screen (loads nothing)
 pnpm bars minute --universe        # minute bars for those symbol-months
+pnpm bars minute --units f.txt     # or exactly the symbol-months a file lists, "SYMBOL YYYY-MM" a line
 pnpm bars verify                   # coverage against the calendar, gaps listed as runs
 pnpm bars compress                 # compress now instead of waiting for the policy (table owner)
 pnpm bars analyze                  # refresh planner statistics on the load's tables (table owner)
