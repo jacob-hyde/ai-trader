@@ -465,6 +465,38 @@ describe("AlpacaClient REST", () => {
     ]);
   });
 
+  it("reads historical trades and quotes page by page, ticker at time on request", async () => {
+    const quotes = routes({ "GET /v2/stocks/quotes": { quotes: { AAPL: [QUOTE] }, next_page_token: null } });
+    const { alpaca, calls } = client((call, signal) =>
+      call.url.pathname !== "/v2/stocks/trades"
+        ? quotes(call, signal)
+        : json(
+            call.url.searchParams.get("page_token") === null
+              ? { trades: { AAPL: [TRADE] }, next_page_token: "t2" }
+              : { trades: null, next_page_token: null },
+          ),
+    );
+    const request = {
+      symbols: ["AAPL"],
+      start: "2017-03-01T14:35:00Z",
+      end: "2017-03-01T14:36:00Z",
+      limit: 1_000,
+      feed: "sip" as const,
+      asof: "-",
+    };
+    const prints = [];
+    for await (const trades of alpaca.data.iterateTrades(request)) {
+      prints.push(...(trades.items["AAPL"] ?? []));
+    }
+    expect(prints).toEqual([TRADE]);
+    await alpaca.data.getQuotesPage(request);
+    expect(calls.map((call) => `${call.url.pathname}${call.url.search}`)).toEqual([
+      "/v2/stocks/trades?symbols=AAPL&start=2017-03-01T14%3A35%3A00Z&end=2017-03-01T14%3A36%3A00Z&limit=1000&feed=sip&asof=-",
+      "/v2/stocks/trades?symbols=AAPL&start=2017-03-01T14%3A35%3A00Z&end=2017-03-01T14%3A36%3A00Z&limit=1000&feed=sip&asof=-&page_token=t2",
+      "/v2/stocks/quotes?symbols=AAPL&start=2017-03-01T14%3A35%3A00Z&end=2017-03-01T14%3A36%3A00Z&limit=1000&feed=sip&asof=-",
+    ]);
+  });
+
   it("turns symbol mapping off on request, for ticker-at-time bars", async () => {
     const { alpaca, calls } = client(() => json({ bars: {}, next_page_token: null }));
     await alpaca.data.getBarsPage({ symbols: ["FB"], timeframe: "1Day", start: "2021-06-01", asof: "-" });
