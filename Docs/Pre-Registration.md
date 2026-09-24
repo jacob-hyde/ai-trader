@@ -28,7 +28,9 @@ This matters because the in-sample period overlaps data already looked at. The f
 4. **The signal-time feasibility check in section 8**, on 2017-01-03 to 2017-05-31. It used bars up
    to 09:35 only: which names ranked in play, their opening range, and whether each stop passed the
    cost gate. No bar after the signal was read.
-5. Synthetic data only, everywhere else (goldens, invariants, null model).
+5. **The L.1 blind runs (2026-09-23)**, over the whole in-sample period. Signal-time counts only; the
+   numbers are in Amendment 2.
+6. Synthetic data only, everywhere else (goldens, invariants, null model).
 
 ## 2. Hypotheses
 
@@ -367,6 +369,48 @@ the store matches what Alpaca serves today.
 
 Found by the coverage check after the minute load finished, before any L.2 run, and not informed by any
 result. Section 11 carries it as `samples.excludedSessions`, and its version is now 2.
+
+### Amendment 2 (2026-09-23): the L.1 blind runs, and 66 months of minute bars loaded
+
+Both happened while building L.1 (the backtest runner), before any L.2 run. No threshold changes, so
+section 11 stays at version 2.
+
+**What was seen.** The runner was proven on real data blind: it ran the whole mechanics over the
+in-sample period, and everything after 09:35 (fills, exits, which entries triggered, R) was computed in
+memory and dropped, never stored or shown. What came out is timing and signal-time counts, the kind of
+information section 8 used, now for all of 2016 to 2023. From the last blind run, before the ETF list,
+long and short together:
+
+| | |
+|---|---|
+| Sessions | 2,011 |
+| Eligible names a session | 827 on average |
+| In play a session | 19.9 on average |
+| Signals | 39,175 |
+| Passed the 0.15R gate, range-low stop | 19,709 (exit A), 19,708 (exit B) |
+| Passed, 50% ATR stop | 13,384 (A), 13,369 (B) |
+| Passed, 10% ATR stop | 184 (A), 183 (B) |
+
+These pass more often than section 8 because 2016 to 2023 holds far more volatile years than early 2017.
+Run over section 8's own window, longs only, the runner gives 9.97 signals a session and gate passes of
+35.7% (range low), 9.7% (50% ATR), and 0 of 1,027 (10% ATR), against section 8's 9.8, 36%, 9%, and 1 of
+873.
+
+Exit B passes a few fewer than exit A because a short whose 2R target would sit at or below $0 cannot
+be expressed as an order. Such a signal, like an ATR stop that would sit below $0 under either exit, is
+counted as refused for that variant, not traded. It cannot happen to the confirmatory range-low longs,
+whose stop and target are always positive.
+
+**Data fix.** The blind run lists every eligible name it could not rank. 157 symbol-sessions were names
+that traded that day with minute bars never loaded, 66 symbol-months in all. 38 of them are February and
+March 2022: the loader chose months with a screen that counted 2022-03-08's extended-hours volume in the
+average, so names pushed below 1M shares by that one day were skipped, while the study leaves the day out
+(Amendment 1). The other 28 are scattered from 2017 to 2023, where the loader's screen and the study's
+differ at the margin. All 66 were loaded on 2026-09-23 (356,401 bars). Afterwards the only names left
+unrankable are 27 symbol-sessions whose lookback traded nothing in the opening minutes, which have no RVOL
+to rank on.
+
+Neither was informed by any result: the blind runs produce none.
 
 ## 13. Known limitations
 
